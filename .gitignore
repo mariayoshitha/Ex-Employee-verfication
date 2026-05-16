@@ -1,0 +1,11 @@
+# Secrets — NEVER commit (file must live outside public_html)
+tt-credentials.php
+
+# Real employee data / PII — keep out of version control
+data.json
+audit.json
+
+# Server + tooling artifacts
+error_log
+.gstack/
+*.zip

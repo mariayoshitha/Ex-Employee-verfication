@@ -1,0 +1,44 @@
+Options -Indexes
+RewriteEngine On
+RewriteBase /
+
+# Force HTTPS
+RewriteCond %{HTTPS} off
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# Block direct access to sensitive files (THE_REQUEST is the original HTTP
+# request line — unchanged by internal mod_rewrite passes, so this blocks
+# direct browser requests without blocking internal rewrites)
+RewriteCond %{THE_REQUEST} \s/data\.json[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+RewriteCond %{THE_REQUEST} \s/audit\.json[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+RewriteCond %{THE_REQUEST} \s/admin\.php[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+RewriteCond %{THE_REQUEST} \s/api\.php[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+RewriteCond %{THE_REQUEST} \s/\.htaccess[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+RewriteCond %{THE_REQUEST} \s/tt-credentials\.php[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+# Clean URL routing
+RewriteRule ^admin/?$   admin.php   [L]
+RewriteRule ^api/?$     api.php     [QSA,L]
+RewriteRule ^manual/?$  manual.html [L]
+
+# Security headers
+<IfModule mod_headers.c>
+  Header always set X-Frame-Options "DENY"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-XSS-Protection "1; mode=block"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none';"
+</IfModule>

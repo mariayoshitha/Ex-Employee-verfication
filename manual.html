@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>User Manual — TechTeira Employment Verification</title>
+<style>
+  :root {
+    --blue: #2563eb;
+    --blue-light: #eff6ff;
+    --green: #16a34a;
+    --green-light: #f0fdf4;
+    --yellow: #d97706;
+    --yellow-light: #fffbeb;
+    --red: #dc2626;
+    --red-light: #fef2f2;
+    --gray: #6b7280;
+    --border: #e5e7eb;
+    --text: #111827;
+    --text-secondary: #6b7280;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--text); background: #f9fafb; font-size: 15px; line-height: 1.6; }
+
+  /* ── Layout ── */
+  .layout { display: flex; min-height: 100vh; }
+  .sidebar { width: 260px; background: #1e293b; color: #cbd5e1; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; }
+  .sidebar-logo { padding: 24px 20px 16px; border-bottom: 1px solid #334155; }
+  .sidebar-logo .brand { font-size: 16px; font-weight: 700; color: #f1f5f9; }
+  .sidebar-logo .sub { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  .sidebar-nav { padding: 16px 0; }
+  .nav-section { padding: 6px 20px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #475569; font-weight: 600; }
+  .nav-item { display: block; padding: 8px 20px; color: #94a3b8; text-decoration: none; font-size: 13.5px; border-left: 3px solid transparent; transition: all .15s; }
+  .nav-item:hover, .nav-item.active { background: #334155; color: #f1f5f9; border-left-color: #3b82f6; }
+  .main { flex: 1; overflow-x: hidden; }
+
+  /* ── Header ── */
+  .page-header { background: white; border-bottom: 1px solid var(--border); padding: 28px 40px 24px; position: sticky; top: 0; z-index: 10; }
+  .page-header h1 { font-size: 22px; font-weight: 700; }
+  .page-header p { color: var(--text-secondary); font-size: 14px; margin-top: 4px; }
+  .role-badges { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .badge-admin { background: #ede9fe; color: #6d28d9; }
+  .badge-loc { background: #dcfce7; color: #15803d; }
+  .badge-pub { background: #e0f2fe; color: #0369a1; }
+
+  /* ── Content ── */
+  .content { padding: 36px 40px; max-width: 900px; }
+  section { margin-bottom: 48px; scroll-margin-top: 80px; }
+  h2 { font-size: 20px; font-weight: 700; color: var(--text); padding-bottom: 10px; border-bottom: 2px solid var(--border); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+  h3 { font-size: 15px; font-weight: 600; color: var(--text); margin: 20px 0 10px; }
+  p { color: #374151; margin-bottom: 12px; }
+
+  /* ── Callouts ── */
+  .callout { border-radius: var(--radius); padding: 14px 16px; margin: 16px 0; display: flex; gap: 12px; }
+  .callout-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+  .callout-body { font-size: 13.5px; }
+  .callout-body strong { display: block; margin-bottom: 3px; font-size: 14px; }
+  .callout.info { background: var(--blue-light); border: 1px solid #bfdbfe; }
+  .callout.warning { background: var(--yellow-light); border: 1px solid #fde68a; }
+  .callout.success { background: var(--green-light); border: 1px solid #bbf7d0; }
+  .callout.danger { background: var(--red-light); border: 1px solid #fecaca; }
+
+  /* ── Steps ── */
+  .steps { list-style: none; counter-reset: steps; }
+  .steps li { counter-increment: steps; display: flex; gap: 14px; margin-bottom: 16px; }
+  .steps li::before { content: counter(steps); width: 26px; height: 26px; background: var(--blue); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px; }
+  .steps .step-body { flex: 1; }
+  .steps .step-body strong { display: block; font-size: 14px; margin-bottom: 3px; }
+  .steps .step-body span { color: #4b5563; font-size: 13.5px; }
+
+  /* ── Mock UI ── */
+  .mockup { background: white; border: 1.5px solid var(--border); border-radius: var(--radius); overflow: hidden; margin: 16px 0; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+  .mockup-bar { background: #f3f4f6; border-bottom: 1px solid var(--border); padding: 8px 12px; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot-r { background: #f87171; }
+  .dot-y { background: #fbbf24; }
+  .dot-g { background: #34d399; }
+  .mock-url { flex: 1; background: white; border: 1px solid var(--border); border-radius: 4px; padding: 3px 10px; font-size: 12px; color: var(--gray); margin-left: 6px; }
+  .mockup-body { padding: 20px; }
+
+  /* ── Mock form elements ── */
+  .mock-field { margin-bottom: 12px; }
+  .mock-label { font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; display: block; }
+  .mock-input { width: 100%; padding: 8px 10px; border: 1.5px solid #d1d5db; border-radius: 6px; font-size: 13px; color: #374151; background: white; }
+  .mock-input.focus { border-color: var(--blue); box-shadow: 0 0 0 3px #eff6ff; }
+  .mock-select { width: 100%; padding: 8px 10px; border: 1.5px solid #d1d5db; border-radius: 6px; font-size: 13px; color: #374151; background: white; }
+  .mock-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mock-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .mock-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; }
+  .mock-btn-primary { background: var(--blue); color: white; }
+  .mock-btn-outline { background: white; color: var(--blue); border: 1.5px solid var(--blue); }
+  .mock-btn-success { background: var(--green); color: white; }
+  .mock-btn-danger { background: var(--red); color: white; }
+  .mock-btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
+
+  /* ── Mock table ── */
+  .mock-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .mock-table th { background: #f9fafb; padding: 8px 12px; text-align: left; font-weight: 600; color: var(--gray); font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+  .mock-table td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; color: #374151; }
+  .mock-table tr:last-child td { border-bottom: none; }
+
+  /* ── Mock toolbar ── */
+  .mock-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .mock-search { flex: 0 0 25%; padding: 7px 10px 7px 28px; border: 1.5px solid var(--border); border-radius: 7px; font-size: 12px; color: var(--gray); background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 9px center; }
+  .mock-filter { padding: 7px 10px; border: 1.5px solid var(--border); border-radius: 7px; font-size: 12px; color: #374151; background: white; min-width: 120px; }
+
+  /* ── Status pills ── */
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .pill-resigned { background: #fef3c7; color: #92400e; }
+  .pill-terminated { background: #fee2e2; color: #991b1b; }
+  .pill-layoff { background: #ede9fe; color: #5b21b6; }
+  .pill-retired { background: #d1fae5; color: #065f46; }
+  .pill-contract { background: #dbeafe; color: #1e40af; }
+
+  /* ── Upload section ── */
+  .mock-upload { border: 2px dashed #d1d5db; border-radius: var(--radius); padding: 20px; text-align: center; background: #f9fafb; }
+  .mock-upload-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  /* ── Login screen ── */
+  .mock-login { max-width: 360px; margin: 0 auto; }
+  .mock-login-header { text-align: center; padding: 24px 0 20px; }
+  .mock-login-header .brand { font-size: 20px; font-weight: 800; color: var(--text); letter-spacing: -.5px; }
+  .mock-login-header .brand span { color: var(--blue); }
+  .mock-login-header .sub { font-size: 12px; color: var(--gray); margin-top: 4px; }
+  .mock-card { background: white; border: 1px solid var(--border); border-radius: 14px; padding: 28px 24px; box-shadow: 0 4px 16px rgba(0,0,0,.06); }
+
+  /* ── Audit table ── */
+  .audit-action { display: inline-flex; align-items: center; gap: 4px; }
+  .audit-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot-add { background: var(--green); }
+  .dot-edit { background: var(--blue); }
+  .dot-delete { background: var(--red); }
+  .dot-csv { background: #8b5cf6; }
+
+  /* ── Table of contents ── */
+  .toc { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 36px; }
+  .toc h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--gray); margin-bottom: 12px; margin-top: 0; }
+  .toc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
+  .toc a { font-size: 13.5px; color: var(--blue); text-decoration: none; padding: 3px 0; display: block; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ── Role tag ── */
+  .role-tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; vertical-align: middle; margin-left: 6px; }
+  .rt-admin { background: #ede9fe; color: #6d28d9; }
+  .rt-loc { background: #dcfce7; color: #15803d; }
+
+  code { font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 13px; color: #1d4ed8; }
+  kbd { font-family: inherit; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; padding: 1px 6px; font-size: 12px; box-shadow: 0 1px 0 #d1d5db; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  @media (max-width: 720px) {
+    .layout { flex-direction: column; }
+    .sidebar { width: 100%; height: auto; position: static; }
+    .content { padding: 24px 20px; }
+    .mock-row, .mock-row-3 { grid-template-columns: 1fr; }
+    .toc-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ── Sidebar ── -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="brand">TechTeira</div>
+    <div class="sub">Employment Verification — Help</div>
+  </div>
+  <div class="sidebar-nav">
+    <div class="nav-section">Getting Started</div>
+    <a href="#login" class="nav-item">Logging In</a>
+    <a href="#roles" class="nav-item">Roles &amp; Access</a>
+    <div class="nav-section">Admin</div>
+    <a href="#add-record" class="nav-item">Adding a Record</a>
+    <a href="#edit-delete" class="nav-item">Edit &amp; Delete</a>
+    <a href="#csv-upload" class="nav-item">CSV Bulk Upload</a>
+    <a href="#filters" class="nav-item">Filtering &amp; Search</a>
+    <a href="#audit" class="nav-item">Audit Log</a>
+    <div class="nav-section">Location User</div>
+    <a href="#loc-add" class="nav-item">Adding a Record</a>
+    <a href="#loc-view" class="nav-item">Viewing Records</a>
+    <div class="nav-section">Public Portal</div>
+    <a href="#portal" class="nav-item">Employee Lookup</a>
+    <div class="nav-section">Reference</div>
+    <a href="#fields" class="nav-item">Field Reference</a>
+    <a href="#troubleshoot" class="nav-item">Troubleshooting</a>
+  </div>
+</nav>
+
+<!-- ── Main ── -->
+<div class="main">
+<div class="page-header">
+  <h1>Employment Verification — User Manual</h1>
+  <p>Step-by-step guide for Admins and Location Users.</p>
+  <div class="role-badges">
+    <span class="badge badge-admin">&#9670; Admin — full access</span>
+    <span class="badge badge-loc">&#9670; Location User — own office only</span>
+    <span class="badge badge-pub">&#9670; Public Portal — read-only lookup</span>
+  </div>
+</div>
+
+<div class="content">
+
+<!-- TOC -->
+<div class="toc">
+  <h3>Contents</h3>
+  <div class="toc-grid">
+    <a href="#login">1. Logging In</a>
+    <a href="#roles">2. Roles &amp; Access</a>
+    <a href="#add-record">3. Adding a Record</a>
+    <a href="#edit-delete">4. Edit &amp; Delete</a>
+    <a href="#csv-upload">5. CSV Bulk Upload</a>
+    <a href="#filters">6. Filtering &amp; Search</a>
+    <a href="#audit">7. Audit Log</a>
+    <a href="#loc-add">8. Location User — Add</a>
+    <a href="#portal">9. Public Portal</a>
+    <a href="#fields">10. Field Reference</a>
+    <a href="#troubleshoot">11. Troubleshooting</a>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="login">
+  <h2>&#128274; Logging In</h2>
+
+  <p>Navigate to <code>https://verify.techteira.com/admin</code>. Enter your username and password, then click <strong>Sign In</strong>.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">https://verify.techteira.com/admin</div>
+    </div>
+    <div class="mockup-body">
+      <div class="mock-login">
+        <div class="mock-login-header">
+          <div class="brand">Tech<span>Teira</span></div>
+          <div class="sub">Employment Verification Portal</div>
+        </div>
+        <div class="mock-card">
+          <div class="mock-field">
+            <span class="mock-label">Username</span>
+            <div class="mock-input">admin</div>
+          </div>
+          <div class="mock-field">
+            <span class="mock-label">Password</span>
+            <div class="mock-input">&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;</div>
+          </div>
+          <div class="mock-btn mock-btn-primary" style="width:100%;justify-content:center;margin-top:4px;">Sign In</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <ol class="steps">
+    <li>
+      <div class="step-body">
+        <strong>Open the admin URL</strong>
+        <span>Go to <code>https://verify.techteira.com/admin</code> — do not use <code>/admin.php</code> directly (blocked).</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Enter your credentials</strong>
+        <span>Use your assigned username (e.g., <code>chicago</code>, <code>admin</code>). Password is case-sensitive.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Click Sign In</strong>
+        <span>Session lasts 30 minutes of inactivity. After 5 failed attempts, your IP is locked for 15 minutes.</span>
+      </div>
+    </li>
+  </ol>
+
+  <div class="callout warning">
+    <div class="callout-icon">&#9888;</div>
+    <div class="callout-body">
+      <strong>Session timeout</strong>
+      The session expires after 30 minutes of inactivity. Any unsaved changes are lost. Save work frequently.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="roles">
+  <h2>&#128100; Roles &amp; Access</h2>
+
+  <div class="mockup">
+    <div class="mockup-body" style="padding:16px;">
+      <table class="mock-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Admin</th>
+            <th>Location User</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>View all locations</td><td>&#9989;</td><td>&#10060; Own office only</td></tr>
+          <tr><td>Add / Edit / Delete records</td><td>&#9989;</td><td>&#9989; Own office only</td></tr>
+          <tr><td>CSV bulk upload</td><td>&#9989;</td><td>&#9989; Own office only</td></tr>
+          <tr><td>Filter by location</td><td>&#9989;</td><td>&#10060; Fixed to own office</td></tr>
+          <tr><td>View Audit Log</td><td>&#9989;</td><td>&#10060;</td></tr>
+          <tr><td>Audit Log link in header</td><td>&#9989;</td><td>&#10060; Hidden</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <div class="callout-icon">&#8505;</div>
+    <div class="callout-body">
+      <strong>Location users are scoped automatically</strong>
+      A user logged in as <code>chicago</code> can only see, add, edit, or delete records tagged <strong>Chicago, USA</strong>. No config needed — the system enforces this server-side.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="add-record">
+  <h2>&#10133; Adding a Record <span class="role-tag rt-admin">Admin</span><span class="role-tag rt-loc">Location User</span></h2>
+
+  <p>Click the <strong>+ Add Record</strong> button in the top-right of the dashboard. A form slides in at the top of the page.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">verify.techteira.com/admin</div>
+    </div>
+    <div class="mockup-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <span style="font-weight:700;font-size:15px;">Employee Records</span>
+        <div class="mock-btn mock-btn-primary mock-btn-sm">+ Add Record</div>
+      </div>
+      <div style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
+        <div style="font-weight:600;font-size:14px;margin-bottom:12px;">Add New Record</div>
+        <div class="mock-row" style="margin-bottom:10px;">
+          <div class="mock-field"><span class="mock-label">Employee ID *</span><div class="mock-input focus">TT-1042</div></div>
+          <div class="mock-field"><span class="mock-label">Full Name *</span><div class="mock-input">Aisha Patel</div></div>
+        </div>
+        <div class="mock-row" style="margin-bottom:10px;">
+          <div class="mock-field"><span class="mock-label">Role / Job Title *</span><div class="mock-input">Senior Analyst</div></div>
+          <div class="mock-field">
+            <span class="mock-label">Location *</span>
+            <div class="mock-select" style="padding:8px 10px;border:1.5px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;">Hyderabad, India</div>
+          </div>
+        </div>
+        <div class="mock-row" style="margin-bottom:10px;">
+          <div class="mock-field"><span class="mock-label">Date of Birth *</span><div class="mock-input">1990-06-15</div></div>
+          <div class="mock-field"><span class="mock-label">Start Date *</span><div class="mock-input">2021-03-01</div></div>
+        </div>
+        <div class="mock-row" style="margin-bottom:14px;">
+          <div class="mock-field"><span class="mock-label">End Date</span><div class="mock-input" style="color:#9ca3af;">Leave blank if still employed</div></div>
+          <div class="mock-field">
+            <span class="mock-label">Separation Type *</span>
+            <div class="mock-select" style="padding:8px 10px;border:1.5px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;">Resigned</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <div class="mock-btn mock-btn-success mock-btn-sm">Save Record</div>
+          <div class="mock-btn mock-btn-outline mock-btn-sm">Cancel</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <ol class="steps">
+    <li>
+      <div class="step-body">
+        <strong>Click "+ Add Record"</strong>
+        <span>Button is in the top-right area of the dashboard. The add form expands at the top of the list.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Fill in required fields (marked *)</strong>
+        <span>Employee ID, Full Name, Role, Location, Date of Birth, Start Date, and Separation Type are all required.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>End Date — leave blank for active employees</strong>
+        <span>If the employee is still with the company, leave End Date empty. Only fill it when they have left.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Click "Save Record"</strong>
+        <span>A green confirmation banner appears at the top. The new row is immediately visible in the table.</span>
+      </div>
+    </li>
+  </ol>
+
+  <div class="callout info">
+    <div class="callout-icon">&#8505;</div>
+    <div class="callout-body">
+      <strong>Employee ID must be unique</strong>
+      If you save a record with a duplicate Employee ID, the system will reject it with an error. Use a consistent format (e.g., <code>TT-1042</code>).
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="edit-delete">
+  <h2>&#9998; Edit &amp; Delete <span class="role-tag rt-admin">Admin</span><span class="role-tag rt-loc">Location User</span></h2>
+
+  <p>Each row in the table has <strong>Edit</strong> and <strong>Delete</strong> buttons. Location users can only edit/delete records belonging to their own office.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">verify.techteira.com/admin</div>
+    </div>
+    <div class="mockup-body" style="padding:12px;">
+      <table class="mock-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Name</th><th>Role</th><th>Location</th><th>Start</th><th>Separation</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>TT-1042</td>
+            <td>Aisha Patel</td>
+            <td>Sr. Analyst</td>
+            <td>Hyderabad, India</td>
+            <td>2021-03-01</td>
+            <td><span class="pill pill-resigned">Resigned</span></td>
+            <td style="display:flex;gap:6px;">
+              <div class="mock-btn mock-btn-outline mock-btn-sm">Edit</div>
+              <div class="mock-btn mock-btn-danger mock-btn-sm">Delete</div>
+            </td>
+          </tr>
+          <tr>
+            <td>TT-0891</td>
+            <td>James Okafor</td>
+            <td>DevOps Lead</td>
+            <td>Chicago, USA</td>
+            <td>2019-07-15</td>
+            <td><span class="pill pill-contract">Contract End</span></td>
+            <td style="display:flex;gap:6px;">
+              <div class="mock-btn mock-btn-outline mock-btn-sm">Edit</div>
+              <div class="mock-btn mock-btn-danger mock-btn-sm">Delete</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h3>Editing a record</h3>
+  <ol class="steps">
+    <li><div class="step-body"><strong>Click "Edit" on the row</strong><span>The row expands into an inline edit form with all current values pre-filled.</span></div></li>
+    <li><div class="step-body"><strong>Modify the fields needed</strong><span>Change only what needs updating — all other fields stay as-is.</span></div></li>
+    <li><div class="step-body"><strong>Click "Save"</strong><span>Changes apply instantly. The audit log records who made the change and when.</span></div></li>
+  </ol>
+
+  <h3>Deleting a record</h3>
+  <ol class="steps">
+    <li><div class="step-body"><strong>Click "Delete" on the row</strong><span>A confirmation prompt appears: <em>"Delete this record?"</em></span></div></li>
+    <li><div class="step-body"><strong>Confirm the deletion</strong><span>Click OK. The record is permanently removed. This action cannot be undone — check the audit log if needed.</span></div></li>
+  </ol>
+
+  <div class="callout danger">
+    <div class="callout-icon">&#9888;</div>
+    <div class="callout-body">
+      <strong>Deletion is permanent</strong>
+      There is no recycle bin. Once deleted, a record cannot be restored unless you re-add it manually or re-upload via CSV. The audit log records that the deletion happened but does not store the full record data.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="csv-upload">
+  <h2>&#128196; CSV Bulk Upload <span class="role-tag rt-admin">Admin</span><span class="role-tag rt-loc">Location User</span></h2>
+
+  <p>Upload many records at once using a CSV file. This <strong>merges</strong> new records into the existing data — it does not wipe the database.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">verify.techteira.com/admin</div>
+    </div>
+    <div class="mockup-body">
+      <div style="border:1.5px solid #e5e7eb;border-radius:8px;padding:16px;max-width:560px;">
+        <div style="font-weight:600;font-size:14px;margin-bottom:12px;">Upload / Sync Data</div>
+        <div class="mock-upload-row">
+          <div class="mock-btn mock-btn-outline mock-btn-sm">&#11015; Template</div>
+          <div class="mock-input" style="flex:1;min-width:160px;font-size:12px;color:#9ca3af;padding:6px 10px;">Choose File&nbsp;&nbsp;No file chosen</div>
+          <div class="mock-btn mock-btn-success mock-btn-sm">Upload CSV</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <ol class="steps">
+    <li>
+      <div class="step-body">
+        <strong>Download the template</strong>
+        <span>Click <strong>⬇ Template</strong>. Open the downloaded <code>template.csv</code> in Excel or Google Sheets.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Fill in your data</strong>
+        <span>Do not change column headers. Fill each row with one employee. See the <a href="#fields">Field Reference</a> for allowed values.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Save as CSV</strong>
+        <span>In Excel: <kbd>File</kbd> → <kbd>Save As</kbd> → choose <strong>CSV UTF-8</strong>. In Google Sheets: <kbd>File</kbd> → <kbd>Download</kbd> → <strong>CSV</strong>.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Click "Choose File" and select your CSV</strong>
+        <span>The filename appears next to the button.</span>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <strong>Click "Upload CSV"</strong>
+        <span>A green banner confirms how many records were uploaded. If any rows have errors (missing fields, wrong date format), those rows are skipped and the count reflects only what succeeded.</span>
+      </div>
+    </li>
+  </ol>
+
+  <h3>CSV column order</h3>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:12px;overflow-x:auto;">
+      <table class="mock-table">
+        <thead>
+          <tr><th>#</th><th>Column Header</th><th>Example</th><th>Required</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>A</td><td>employeeId</td><td>TT-1042</td><td>&#9989;</td></tr>
+          <tr><td>B</td><td>name</td><td>Aisha Patel</td><td>&#9989;</td></tr>
+          <tr><td>C</td><td>role</td><td>Senior Analyst</td><td>&#9989;</td></tr>
+          <tr><td>D</td><td>location</td><td>Hyderabad, India</td><td>&#9989;</td></tr>
+          <tr><td>E</td><td>dob</td><td>1990-06-15</td><td>&#9989;</td></tr>
+          <tr><td>F</td><td>startDate</td><td>2021-03-01</td><td>&#9989;</td></tr>
+          <tr><td>G</td><td>endDate</td><td>2023-12-31 (blank if active)</td><td>&#10060;</td></tr>
+          <tr><td>H</td><td>separationType</td><td>Resigned</td><td>&#9989;</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <div class="callout-icon">&#9888;</div>
+    <div class="callout-body">
+      <strong>Dates must be YYYY-MM-DD</strong>
+      Use ISO format: <code>1990-06-15</code>, not <code>15/06/1990</code> or <code>June 15, 1990</code>. Wrong format causes that row to be skipped silently.
+    </div>
+  </div>
+
+  <div class="callout info">
+    <div class="callout-icon">&#8505;</div>
+    <div class="callout-body">
+      <strong>Duplicate Employee IDs are skipped</strong>
+      If a row in your CSV has an Employee ID that already exists in the database, that row is skipped. To update an existing record, use the Edit button instead.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="filters">
+  <h2>&#128269; Filtering &amp; Search <span class="role-tag rt-admin">Admin</span><span class="role-tag rt-loc">Location User</span></h2>
+
+  <p>The toolbar above the records table has search and filter controls. All filters work together — applying one does not reset another.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">verify.techteira.com/admin</div>
+    </div>
+    <div class="mockup-body">
+      <div class="mock-toolbar">
+        <input class="mock-search" value="aisha" readonly style="pointer-events:none;"/>
+        <select class="mock-filter" style="pointer-events:none;"><option>Type: Resigned</option></select>
+        <select class="mock-filter" style="pointer-events:none;"><option>Loc: All</option></select>
+        <div class="mock-btn mock-btn-primary mock-btn-sm" style="margin-left:auto;">+ Add Record</div>
+      </div>
+      <table class="mock-table">
+        <thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Location</th><th>Separation</th></tr></thead>
+        <tbody>
+          <tr><td>TT-1042</td><td>Aisha Patel</td><td>Sr. Analyst</td><td>Hyderabad</td><td><span class="pill pill-resigned">Resigned</span></td></tr>
+        </tbody>
+      </table>
+      <div style="font-size:12px;color:#9ca3af;margin-top:8px;">Showing 1 of 42 records</div>
+    </div>
+  </div>
+
+  <h3>Search box</h3>
+  <p>Type any part of the Employee ID, name, role, or location. Results update when you press <kbd>Enter</kbd> or the form submits.</p>
+
+  <h3>Type filter</h3>
+  <p>Filter by separation type: <em>Resigned, Terminated, Layoff, Retired, Contract End</em>. Select <strong>All Types</strong> to clear.</p>
+
+  <h3>Location filter <span class="role-tag rt-admin">Admin only</span></h3>
+  <p>Admin accounts see a location dropdown. Location users always see only their own office — no dropdown appears for them.</p>
+
+  <div class="callout info">
+    <div class="callout-icon">&#8505;</div>
+    <div class="callout-body">
+      <strong>Filters combine</strong>
+      Setting Type = "Resigned" AND Location = "Chicago, USA" shows only resigned employees in Chicago. Clearing the page URL removes all filters.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="audit">
+  <h2>&#128203; Audit Log <span class="role-tag rt-admin">Admin only</span></h2>
+
+  <p>Every add, edit, delete, and CSV upload is recorded with timestamp, user, and affected Employee ID. Access via the <strong>Audit Log →</strong> link in the header.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">verify.techteira.com/admin?page=audit</div>
+    </div>
+    <div class="mockup-body">
+      <div style="font-weight:700;font-size:15px;margin-bottom:14px;">Audit Log</div>
+      <table class="mock-table">
+        <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Employee ID</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr>
+            <td style="font-size:12px;color:#6b7280;">2025-11-14 09:32</td>
+            <td>admin</td>
+            <td><span class="audit-action"><span class="audit-dot dot-add"></span>add</span></td>
+            <td>TT-1042</td>
+            <td style="font-size:12px;color:#6b7280;">Aisha Patel</td>
+          </tr>
+          <tr>
+            <td style="font-size:12px;color:#6b7280;">2025-11-13 14:05</td>
+            <td>chicago</td>
+            <td><span class="audit-action"><span class="audit-dot dot-csv"></span>csv_upload</span></td>
+            <td>—</td>
+            <td style="font-size:12px;color:#6b7280;">12 records imported</td>
+          </tr>
+          <tr>
+            <td style="font-size:12px;color:#6b7280;">2025-11-13 11:22</td>
+            <td>hyderabad</td>
+            <td><span class="audit-action"><span class="audit-dot dot-edit"></span>edit</span></td>
+            <td>TT-0812</td>
+            <td style="font-size:12px;color:#6b7280;">endDate updated</td>
+          </tr>
+          <tr>
+            <td style="font-size:12px;color:#6b7280;">2025-11-12 16:50</td>
+            <td>admin</td>
+            <td><span class="audit-action"><span class="audit-dot dot-delete"></span>delete</span></td>
+            <td>TT-0233</td>
+            <td style="font-size:12px;color:#6b7280;">Record removed</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p>The <strong>Audit Log →</strong> link is visible in the admin header (top-right) only when logged in as <code>admin</code>. Location users do not see it.</p>
+
+  <div class="callout info">
+    <div class="callout-icon">&#8505;</div>
+    <div class="callout-body">
+      <strong>Audit log is append-only</strong>
+      Entries cannot be edited or deleted from the UI. They persist independently of the employee records, so a deleted employee's history is still traceable.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="loc-add">
+  <h2>&#127970; Location User — Adding Records <span class="role-tag rt-loc">Location User</span></h2>
+
+  <p>Location users see the same dashboard as Admin but scoped to their office. The workflow is identical to the Admin add flow above, with one key difference: the <strong>Location field is fixed</strong> to your office and cannot be changed.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">verify.techteira.com/admin</div>
+    </div>
+    <div class="mockup-body">
+      <div style="background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:8px;padding:16px;max-width:540px;">
+        <div style="font-weight:600;font-size:14px;margin-bottom:12px;">Add New Record</div>
+        <div class="mock-row" style="margin-bottom:10px;">
+          <div class="mock-field"><span class="mock-label">Employee ID *</span><div class="mock-input">TT-2201</div></div>
+          <div class="mock-field"><span class="mock-label">Full Name *</span><div class="mock-input">Carlos Mendez</div></div>
+        </div>
+        <div class="mock-row" style="margin-bottom:10px;">
+          <div class="mock-field"><span class="mock-label">Role / Job Title *</span><div class="mock-input">Account Manager</div></div>
+          <div class="mock-field">
+            <span class="mock-label">Location</span>
+            <div class="mock-input" style="background:#f3f4f6;color:#6b7280;">Chicago, USA <span style="font-size:11px;">(fixed)</span></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <div class="mock-btn mock-btn-success mock-btn-sm">Save Record</div>
+          <div class="mock-btn mock-btn-outline mock-btn-sm">Cancel</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p>All records you add are automatically tagged to your location. You cannot add records for other offices.</p>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="loc-view">
+  <h2>&#128065; Location User — Viewing Records <span class="role-tag rt-loc">Location User</span></h2>
+  <p>The records table shows only your office's employees. The search box and Type filter work the same as for Admin. There is no Location dropdown — it is not needed since records are already pre-filtered to your office.</p>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="portal">
+  <h2>&#127760; Public Employee Lookup Portal</h2>
+
+  <p>Anyone can verify an employee's record at <code>https://verify.techteira.com/</code> — no login required. They need to enter the Employee ID <strong>and</strong> Date of Birth together.</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+      <div class="mock-url">https://verify.techteira.com/</div>
+    </div>
+    <div class="mockup-body">
+      <div style="max-width:480px;margin:0 auto;text-align:center;padding:20px 0 12px;">
+        <div style="font-weight:800;font-size:22px;letter-spacing:-.5px;margin-bottom:4px;">TechTeira</div>
+        <div style="font-size:13px;color:#6b7280;margin-bottom:24px;">Employee Verification Portal</div>
+        <div class="mock-card" style="text-align:left;">
+          <div class="mock-field"><span class="mock-label">Employee ID</span><div class="mock-input focus">TT-1042</div></div>
+          <div class="mock-field"><span class="mock-label">Date of Birth</span><div class="mock-input">1990-06-15</div></div>
+          <div class="mock-btn mock-btn-primary" style="width:100%;justify-content:center;margin-top:4px;">Verify</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout success">
+    <div class="callout-icon">&#9989;</div>
+    <div class="callout-body">
+      <strong>What a successful lookup shows</strong>
+      Name, role, location, start date, end date (if applicable), and separation type. Never shows date of birth or salary.
+    </div>
+  </div>
+
+  <div class="callout info">
+    <div class="callout-icon">&#8505;</div>
+    <div class="callout-body">
+      <strong>Rate limited</strong>
+      The portal allows 20 searches per minute per IP address to prevent abuse. Legitimate use will never hit this limit.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="fields">
+  <h2>&#128196; Field Reference</h2>
+
+  <div class="mockup">
+    <div class="mockup-body" style="padding:12px;overflow-x:auto;">
+      <table class="mock-table">
+        <thead>
+          <tr><th>Field</th><th>Required</th><th>Format / Allowed Values</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>employeeId</code></td><td>&#9989;</td><td>Any unique string. Suggested: <code>TT-XXXX</code></td></tr>
+          <tr><td><code>name</code></td><td>&#9989;</td><td>Full name, free text</td></tr>
+          <tr><td><code>role</code></td><td>&#9989;</td><td>Job title, free text</td></tr>
+          <tr><td><code>location</code></td><td>&#9989;</td><td>Must match exactly: <em>Chicago, USA / Hyderabad, India / Manila, Philippines / Singapore / Kuala Lumpur, Malaysia / Sydney, Australia / Dubai, UAE / Bangkok, Thailand / Jakarta, Indonesia</em></td></tr>
+          <tr><td><code>dob</code></td><td>&#9989;</td><td><code>YYYY-MM-DD</code> — e.g. <code>1990-06-15</code></td></tr>
+          <tr><td><code>startDate</code></td><td>&#9989;</td><td><code>YYYY-MM-DD</code></td></tr>
+          <tr><td><code>endDate</code></td><td>&#10060;</td><td><code>YYYY-MM-DD</code>, or blank if still employed</td></tr>
+          <tr><td><code>separationType</code></td><td>&#9989;</td><td><code>Resigned</code> / <code>Terminated</code> / <code>Layoff</code> / <code>Retired</code> / <code>Contract End</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════ -->
+<section id="troubleshoot">
+  <h2>&#128295; Troubleshooting</h2>
+
+  <h3>Upload says success but records don't appear</h3>
+  <ol class="steps">
+    <li><div class="step-body"><strong>Check date formats</strong><span>Dates must be <code>YYYY-MM-DD</code>. Rows with wrong date format are silently skipped.</span></div></li>
+    <li><div class="step-body"><strong>Check for duplicate Employee IDs</strong><span>Rows where the Employee ID already exists in the database are skipped. Use Edit to update existing records.</span></div></li>
+    <li><div class="step-body"><strong>Check location spelling</strong><span>Location must match exactly (e.g., <code>Kuala Lumpur, Malaysia</code> not <code>KL</code>). Copy from the Field Reference table above.</span></div></li>
+  </ol>
+
+  <h3>Login fails — "Invalid credentials"</h3>
+  <p>Password is case-sensitive. Check for extra spaces. If locked out (5 failed attempts), wait 15 minutes or contact your admin to check server temp files.</p>
+
+  <h3>Session expired — redirected to login</h3>
+  <p>Sessions expire after 30 minutes of inactivity. Log back in — no data is lost, only the session cookie expired.</p>
+
+  <h3>Forbidden (403) when opening admin URL</h3>
+  <p>Do not navigate directly to <code>/admin.php</code> — use <code>/admin</code>. Same for <code>/api</code> (not <code>/api.php</code>). The server blocks direct PHP file access.</p>
+
+  <h3>CSV template download doesn't start</h3>
+  <p>The <strong>⬇ Template</strong> button links to <code>?download=template</code>. If nothing happens, check that cookies are enabled (the download requires an active session).</p>
+
+  <div class="callout danger">
+    <div class="callout-icon">&#128274;</div>
+    <div class="callout-body">
+      <strong>Never share your password or session URL</strong>
+      Sessions are tied to your browser. Do not share the admin URL with query parameters. Always log out when done on a shared machine.
+    </div>
+  </div>
+</section>
+
+<hr/>
+<p style="font-size:12px;color:#9ca3af;text-align:center;padding-bottom:24px;">TechTeira Employment Verification &mdash; Internal Use Only &mdash; Updated 2025</p>
+
+</div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /layout -->
+</body>
+</html>
