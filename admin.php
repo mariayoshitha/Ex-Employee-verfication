@@ -231,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = trim($_POST['username'] ?? '');
             $password = $_POST['password'] ?? '';
             $user     = USERS[$username] ?? null;
-            if ($user && hash_equals($user['password'], $password)) {
+            if ($user && password_verify($password, $user['password'])) {
                 @file_put_contents($rlFile, json_encode(['attempts' => 0, 'lockout_until' => 0]), LOCK_EX);
                 session_regenerate_id(true);
                 $_SESSION['admin_auth']    = true;
@@ -356,23 +356,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── Add record ────────────────────────────────────────────────────────────
     if ($action === 'add_record') {
-        $sep = strtolower(trim($_POST['separationType'] ?? ''));
+        $sep    = strtolower(trim($_POST['separationType'] ?? ''));
+        $newRef = sanitizeText(trim($_POST['reference'] ?? ''), 50);
+        if (!$newRef) { $error = 'Employee ID is required.'; goto done; }
         if (!in_array($sep, $allowedSep, true)) { $error = 'Invalid separation type.'; goto done; }
         $loc  = $isAdminAction ? trim($_POST['location'] ?? '') : $myLocation;
         $data = loadData();
+        // Duplicate Employee ID check
+        $existing = array_map('strtolower', array_column($data, 'reference'));
+        if (in_array(strtolower($newRef), $existing, true)) {
+            $error = 'Employee ID "' . htmlspecialchars($newRef) . '" already exists. Use Edit to update it.';
+            goto done;
+        }
         $data[] = [
             'id'             => generateId(),
-            'reference'      => trim($_POST['reference']),
-            'legalName'      => trim($_POST['legalName']),
-            'role'           => trim($_POST['role'] ?? ''),
+            'reference'      => $newRef,
+            'legalName'      => sanitizeText(trim($_POST['legalName'] ?? ''), 150),
+            'role'           => sanitizeText(trim($_POST['role'] ?? ''), 150),
             'location'       => $loc,
-            'dob'            => normalizeDate(trim($_POST['dob'])),
-            'startDate'      => normalizeDate(trim($_POST['startDate'])),
-            'endDate'        => normalizeDate(trim($_POST['endDate'])),
+            'dob'            => normalizeDate(trim($_POST['dob'] ?? '')),
+            'startDate'      => normalizeDate(trim($_POST['startDate'] ?? '')),
+            'endDate'        => normalizeDate(trim($_POST['endDate'] ?? '')),
             'separationType' => $sep,
             'lastUpdated'    => nowStamp(),
         ];
-        $newRef = trim($_POST['reference']);
         if (!saveData($data)) { $error = 'Failed to write data.json — check file permissions.'; goto done; }
         logAudit($_SESSION['username'] ?? '', 'add', $newRef, $loc);
         header('Location: ' . ADMIN_URL . '?msg=added'); exit;
@@ -462,6 +469,53 @@ if ($filterType !== '') {
 }
 if ($filterLocation !== '') {
     $filtered = array_values(array_filter($filtered, fn($r) => ($r['location'] ?? '') === $filterLocation));
+}
+
+// ── CSV Export (uses same filters/scope as the table view) ────────────────────
+if (isset($_GET['download']) && $_GET['download'] === 'export' && $isLoggedIn) {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="employees-export-' . date('Y-m-d') . '.csv"');
+    header('Cache-Control: no-cache');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['Employee ID','Name','Role','Location','DOB','Start Date','End Date','Separation Type','Last Updated']);
+    foreach ($filtered as $r) {
+        fputcsv($out, [
+            $r['reference']      ?? '',
+            $r['legalName']      ?? '',
+            $r['role']           ?? '',
+            $r['location']       ?? '',
+            $r['dob']            ?? '',
+            $r['startDate']      ?? '',
+            $r['endDate']        ?? '',
+            $r['separationType'] ?? '',
+            $r['lastUpdated']    ?? '',
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+$perPage       = (int)($_GET['pp'] ?? 50);
+if (!in_array($perPage, [25, 50, 100], true)) $perPage = 50;
+$totalFiltered = count($filtered);
+$totalPages    = max(1, (int)ceil($totalFiltered / $perPage));
+$page          = max(1, min($totalPages, (int)($_GET['p'] ?? 1)));
+$paginated     = array_slice($filtered, ($page - 1) * $perPage, $perPage);
+
+// Build URL helper for pagination links (preserves existing filters)
+function pageUrl(array $extra = []): string {
+    $params = array_merge(
+        array_filter([
+            'q'    => trim($_GET['q']   ?? ''),
+            'type' => trim($_GET['type'] ?? ''),
+            'loc'  => trim($_GET['loc']  ?? ''),
+            'pp'   => ($_GET['pp'] ?? '') !== '50' ? ($_GET['pp'] ?? '') : '',
+        ]),
+        $extra
+    );
+    $qs = http_build_query(array_filter($params, fn($v) => $v !== ''));
+    return ADMIN_URL . ($qs ? '?' . $qs : '');
 }
 ?>
 <!DOCTYPE html>
@@ -795,9 +849,15 @@ if ($filterLocation !== '') {
     <?php else: ?>
     <input type="hidden" name="loc" value=""/>
     <?php endif; ?>
+    <select name="pp" onchange="this.form.submit()" style="width:100px;padding:8px 10px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:13px;background:white;cursor:pointer;">
+      <option value="25"  <?= $perPage===25 ?'selected':'' ?>>25 / page</option>
+      <option value="50"  <?= $perPage===50 ?'selected':'' ?>>50 / page</option>
+      <option value="100" <?= $perPage===100?'selected':'' ?>>100 / page</option>
+    </select>
     <?php if ($search || $filterType || $filterLocation): ?>
       <a href="<?= ADMIN_URL ?>" class="btn btn-outline btn-sm">✕ Clear</a>
     <?php endif; ?>
+    <a href="<?= htmlspecialchars(pageUrl(['download' => 'export'])) ?>" class="btn btn-outline btn-sm" style="white-space:nowrap;">⬇ Export CSV</a>
     <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('addModal').style.display='flex'" style="white-space:nowrap;">+ Add Record</button>
   </div>
   </form>
@@ -806,7 +866,13 @@ if ($filterLocation !== '') {
   <div class="table-wrap">
     <div class="table-header">
       <h3>Employee Records</h3>
-      <span><?= count($filtered) ?> record<?= count($filtered) !== 1 ? 's' : '' ?></span>
+      <span>
+        <?php if ($totalPages > 1): ?>
+          <?= (($page-1)*$perPage)+1 ?>–<?= min($page*$perPage, $totalFiltered) ?> of <?= $totalFiltered ?> record<?= $totalFiltered !== 1 ? 's' : '' ?>
+        <?php else: ?>
+          <?= $totalFiltered ?> record<?= $totalFiltered !== 1 ? 's' : '' ?>
+        <?php endif; ?>
+      </span>
     </div>
     <div style="overflow-x:auto;">
       <table>
@@ -825,10 +891,10 @@ if ($filterLocation !== '') {
           </tr>
         </thead>
         <tbody>
-        <?php if (empty($filtered)): ?>
+        <?php if (empty($paginated)): ?>
           <tr><td colspan="10" class="empty-state"><?= $total === 0 ? 'No records yet. Upload a CSV or add manually.' : 'No records match your search.' ?></td></tr>
         <?php else: ?>
-          <?php foreach ($filtered as $r): ?>
+          <?php foreach ($paginated as $r): ?>
             <?php
               $sep   = $r['separationType'] ?? '';
               $sc    = str_replace(' ', '-', $sep);
@@ -862,6 +928,44 @@ if ($filterLocation !== '') {
       </table>
     </div>
   </div>
+
+  <?php if ($totalPages > 1): ?>
+  <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:16px;flex-wrap:wrap;">
+    <?php if ($page > 1): ?>
+      <a href="<?= htmlspecialchars(pageUrl(['p' => $page - 1])) ?>" class="btn btn-outline btn-sm">← Prev</a>
+    <?php else: ?>
+      <span class="btn btn-outline btn-sm" style="opacity:.4;cursor:default;">← Prev</span>
+    <?php endif; ?>
+
+    <?php
+      $start = max(1, $page - 2);
+      $end   = min($totalPages, $page + 2);
+      if ($start > 1): ?>
+        <a href="<?= htmlspecialchars(pageUrl(['p' => 1])) ?>" class="btn btn-outline btn-sm">1</a>
+        <?php if ($start > 2): ?><span style="padding:0 4px;color:#9ca3af;">…</span><?php endif; ?>
+    <?php endif; ?>
+
+    <?php for ($i = $start; $i <= $end; $i++): ?>
+      <?php if ($i === $page): ?>
+        <span class="btn btn-primary btn-sm" style="cursor:default;"><?= $i ?></span>
+      <?php else: ?>
+        <a href="<?= htmlspecialchars(pageUrl(['p' => $i])) ?>" class="btn btn-outline btn-sm"><?= $i ?></a>
+      <?php endif; ?>
+    <?php endfor; ?>
+
+    <?php if ($end < $totalPages): ?>
+      <?php if ($end < $totalPages - 1): ?><span style="padding:0 4px;color:#9ca3af;">…</span><?php endif; ?>
+      <a href="<?= htmlspecialchars(pageUrl(['p' => $totalPages])) ?>" class="btn btn-outline btn-sm"><?= $totalPages ?></a>
+    <?php endif; ?>
+
+    <?php if ($page < $totalPages): ?>
+      <a href="<?= htmlspecialchars(pageUrl(['p' => $page + 1])) ?>" class="btn btn-outline btn-sm">Next →</a>
+    <?php else: ?>
+      <span class="btn btn-outline btn-sm" style="opacity:.4;cursor:default;">Next →</span>
+    <?php endif; ?>
+  </div>
+  <?php endif; ?>
+
 </div><!-- /.wrap -->
 
 <!-- ADD MODAL -->
