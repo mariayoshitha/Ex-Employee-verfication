@@ -81,9 +81,13 @@ function loadConfig(): array {
     if (!file_exists($f)) return bootstrapConfig();
     $d = json_decode(@file_get_contents($f), true);
     if (!is_array($d) || empty($d['users'])) return bootstrapConfig();
-    $d['locations']   = $d['locations']   ?? [];
-    $d['enterprises'] = $d['enterprises'] ?? [];
-    $d['users']       = $d['users']       ?? [];
+    $d['locations']    = $d['locations']    ?? [];
+    $d['enterprises']  = $d['enterprises']  ?? [];
+    $d['users']        = $d['users']        ?? [];
+    $d['card_variant'] = $d['card_variant'] ?? 'v5';
+    if (!in_array($d['card_variant'], ['v1','v2','v3','v4','v5','v6'], true)) {
+        $d['card_variant'] = 'v5';
+    }
     return $d;
 }
 
@@ -123,7 +127,7 @@ function bootstrapConfig(): array {
         http_response_code(500);
         die('Server configuration error: no credentials available. Place tt-credentials.php outside public_html.');
     }
-    $cfg = ['locations'=>$seedLocations, 'enterprises'=>$seedEnterprises, 'users'=>$seedUsers];
+    $cfg = ['locations'=>$seedLocations, 'enterprises'=>$seedEnterprises, 'users'=>$seedUsers, 'card_variant'=>'v5'];
     saveConfig($cfg);
 
     // One-time backfill: existing records without 'enterprise' → India default.
@@ -151,9 +155,10 @@ function bootstrapConfig(): array {
 }
 
 $_CONFIG = loadConfig();
-define('USERS',       $_CONFIG['users']);
-define('LOCATIONS',   $_CONFIG['locations']);
-define('ENTERPRISES', $_CONFIG['enterprises']);
+define('USERS',        $_CONFIG['users']);
+define('LOCATIONS',    $_CONFIG['locations']);
+define('ENTERPRISES',  $_CONFIG['enterprises']);
+define('CARD_VARIANT', $_CONFIG['card_variant']);
 
 // ── Enterprise helpers ───────────────────────────────────────────────────────
 function enterprisesForLocation(string $loc): array {
@@ -361,13 +366,20 @@ if (isset($_GET['download']) && $_GET['download'] === 'template' && isset($_SESS
     ];
 
     $filename = $isAdm ? 'upload-template-admin.csv' : 'upload-template-' . preg_replace('/[^a-z0-9]/i','-', strtolower($myLoc)) . '.csv';
+    // Flush any prior output (warnings, BOM, whitespace) so the CSV isn't corrupted.
+    while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: no-cache');
     $out = fopen('php://output', 'w');
-    fputcsv($out, $headers);
-    fputcsv($out, [$note]);
-    foreach ($rows as $row) fputcsv($out, $row);
+    // UTF-8 BOM so Excel opens DD-MM names / non-ASCII correctly.
+    fwrite($out, "\xEF\xBB\xBF");
+    // Explicit $escape='' silences PHP 8.4 deprecation and emits strict RFC 4180 CSV.
+    fputcsv($out, $headers, ',', '"', '');
+    // Pad note row to header column count so Excel renders it as a full row, not a lone cell.
+    $noteRow = array_pad([$note], count($headers), '');
+    fputcsv($out, $noteRow, ',', '"', '');
+    foreach ($rows as $row) fputcsv($out, $row, ',', '"', '');
     fclose($out);
     exit;
 }
@@ -462,7 +474,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $parsed = [];
             if (($handle = fopen($_FILES['csv_file']['tmp_name'], 'r')) !== false) {
-                $rawHeaders = fgetcsv($handle);
+                $rawHeaders = fgetcsv($handle, 0, ',', '"', '');
                 if ($rawHeaders) {
                     $headers = array_map(fn($h) => strtolower(trim(preg_replace('/\s+/', '', $h))), $rawHeaders);
                     $find    = fn($opts) => array_reduce($opts, fn($c, $o) => $c !== false ? $c : array_search($o, $headers), false);
@@ -479,7 +491,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ];
                     $myEnt    = $_SESSION['user_enterprise'] ?? '';
                     $forceEnt = (!$isAdminAction && $myEnt) ? $myEnt : '';
-                    while (($row = fgetcsv($handle)) !== false) {
+                    while (($row = fgetcsv($handle, 0, ',', '"', '')) !== false) {
                         if (count(array_filter($row)) === 0) continue;
                         // Skip example/note rows
                         $refVal = trim($row[$colMap['reference'] ?? 0] ?? '');
@@ -640,6 +652,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'add_location','edit_location','delete_location',
         'add_enterprise','edit_enterprise','delete_enterprise',
         'add_user','edit_user','delete_user',
+        'set_card_variant',
     ];
     $__cfgLock = null;
     if (in_array($action, $settingsActions, true)) {
@@ -666,7 +679,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sort($cfg['locations']);
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $name, 'add location');
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=loc_added'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=locations&msg=loc_added'); exit;
         }
 
         if ($action === 'edit_location') {
@@ -675,7 +688,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($newName === '' || strlen($newName) > 100) { $error = 'Invalid location name.'; goto done; }
             if (!in_array($oldName, $cfg['locations'], true)) { $error = 'Location not found.'; goto done; }
             if ($oldName === $newName) {
-                header('Location: ' . ADMIN_URL . '?page=settings'); exit;
+                header('Location: ' . ADMIN_URL . '?page=settings&tab=locations'); exit;
             }
             foreach ($cfg['locations'] as $l) {
                 if (strcasecmp($l, $newName) === 0) { $error = 'Location "' . htmlspecialchars($newName) . '" already exists.'; goto done; }
@@ -709,7 +722,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             if ($touched > 0 && !saveData($recs)) { $error = 'Failed to write data.json — config saved but records not updated. Re-run edit to retry.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $newName, 'edit location: ' . $oldName . ' → ' . $newName . ' (records updated: ' . $touched . ')');
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=loc_edited'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=locations&msg=loc_edited'); exit;
         }
 
         if ($action === 'delete_location') {
@@ -738,7 +751,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cfg['locations'] = array_values(array_filter($cfg['locations'], fn($l) => $l !== $name));
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $name, 'delete location');
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=loc_deleted'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=locations&msg=loc_deleted'); exit;
         }
 
         if ($action === 'add_enterprise') {
@@ -752,7 +765,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cfg['enterprises'][] = ['id' => uniqid('ent_'), 'name' => $name, 'location' => $loc];
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $loc, 'add enterprise: ' . $name);
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=ent_added'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=enterprises&msg=ent_added'); exit;
         }
 
         if ($action === 'edit_enterprise') {
@@ -787,7 +800,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $newLoc, 'edit enterprise: ' . $oldName . ' → ' . $newName);
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=ent_edited'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=enterprises&msg=ent_edited'); exit;
         }
 
         if ($action === 'delete_enterprise') {
@@ -812,7 +825,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cfg['enterprises'] = array_values(array_filter($cfg['enterprises'], fn($e) => $e['id'] !== $entId));
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $target['location'], 'delete enterprise: ' . $target['name']);
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=ent_deleted'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=enterprises&msg=ent_deleted'); exit;
         }
 
         if ($action === 'add_user') {
@@ -845,7 +858,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $loc, 'add user: ' . $un);
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=user_added'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=users&msg=user_added'); exit;
         }
 
         if ($action === 'edit_user') {
@@ -882,7 +895,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $loc, 'edit user: ' . $un . ($pw !== '' ? ' (password reset)' : ''));
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=user_edited'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=users&msg=user_edited'); exit;
+        }
+
+        if ($action === 'set_card_variant') {
+            $variant = trim($_POST['card_variant'] ?? '');
+            if (!in_array($variant, ['v1','v2','v3','v4','v5','v6'], true)) {
+                $error = 'Invalid card variant.'; goto done;
+            }
+            $cfg['card_variant'] = $variant;
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', '', 'set card variant: ' . $variant);
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=card&msg=variant_saved'); exit;
         }
 
         if ($action === 'delete_user') {
@@ -896,7 +920,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             unset($cfg['users'][$un]);
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', '', 'delete user: ' . $un);
-            header('Location: ' . ADMIN_URL . '?page=settings&msg=user_deleted'); exit;
+            header('Location: ' . ADMIN_URL . '?page=settings&tab=users&msg=user_deleted'); exit;
         }
     }
 
@@ -951,11 +975,13 @@ if ($filterEnterprise !== '') {
 
 // ── CSV Export (uses same filters/scope as the table view) ────────────────────
 if (isset($_GET['download']) && $_GET['download'] === 'export' && $isLoggedIn) {
+    while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="employees-export-' . date('Y-m-d') . '.csv"');
     header('Cache-Control: no-cache');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type','Last Updated']);
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type','Last Updated'], ',', '"', '');
     foreach ($filtered as $r) {
         fputcsv($out, [
             $r['reference']      ?? '',
@@ -968,7 +994,7 @@ if (isset($_GET['download']) && $_GET['download'] === 'export' && $isLoggedIn) {
             $r['endDate']        ?? '',
             $r['separationType'] ?? '',
             $r['lastUpdated']    ?? '',
-        ]);
+        ], ',', '"', '');
     }
     fclose($out);
     exit;
@@ -1125,6 +1151,24 @@ function pageUrl(array $extra = []): string {
       .upload-row { flex-direction: column; }
       .stats { flex-direction: column; }
     }
+
+    /* Settings tabs */
+    .settings-tabs { background: white; border-radius: 12px 12px 0 0; padding: 0 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); margin-bottom: 0; overflow-x: auto; }
+    .settings-tabs .tabs { display: flex; gap: 4px; border-bottom: none; margin: 0; min-width: max-content; }
+    .settings-tabs .tabs a {
+      padding: 14px 18px;
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #6b7280;
+      text-decoration: none;
+      border-bottom: 3px solid transparent;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .settings-tabs .tabs a:hover { color: #0d1e3c; background: #f9fafb; }
+    .settings-tabs .tabs a.active { color: #0d1e3c; border-bottom-color: #0d1e3c; }
+    .settings-tabs .tabs a .count { font-weight: 500; color: #9ca3af; margin-left: 4px; font-size: 12px; }
+    .settings-tabs .tabs a.active .count { color: #6b7280; }
   </style>
 </head>
 <body>
@@ -1207,17 +1251,66 @@ function pageUrl(array $extra = []): string {
       'loc_added'=>'Location added.','loc_edited'=>'Location updated.','loc_deleted'=>'Location deleted.',
       'ent_added'=>'Enterprise added.','ent_edited'=>'Enterprise updated.','ent_deleted'=>'Enterprise deleted.',
       'user_added'=>'User added.','user_edited'=>'User updated.','user_deleted'=>'User deleted.',
+      'variant_saved'=>'Result card style updated.',
     ];
     if ($adminPage === 'settings' && isset($settingsMsgMap[$msgGet])):
   ?><div class="flash success">✓ <?= htmlspecialchars($settingsMsgMap[$msgGet]) ?></div><?php endif; ?>
 
   <?php if ($adminPage === 'settings' && $isAdmin): ?>
   <!-- ── SETTINGS PAGE ─────────────────────────────────────────────────────── -->
-  <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:24px;">
-    <h2 style="font-size:18px;font-weight:600;margin-bottom:6px;">Settings</h2>
-    <p style="color:#6b7280;font-size:13px;margin-bottom:0;">Manage locations, enterprises, and user accounts. Stored in <code>tt-config.json</code> outside the web root.</p>
+  <?php
+    $settingsTab = trim($_GET['tab'] ?? 'card');
+    if (!in_array($settingsTab, ['card','locations','enterprises','users'], true)) $settingsTab = 'card';
+    $tabUrl = fn($t) => ADMIN_URL . '?page=settings&tab=' . $t;
+  ?>
+  <div style="background:white;border-radius:12px 12px 0 0;padding:20px 24px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+    <h2 style="font-size:18px;font-weight:600;margin-bottom:4px;">Settings</h2>
+    <p style="color:#6b7280;font-size:12.5px;margin-bottom:0;">Manage card style, locations, enterprises, and user accounts. Stored in <code>tt-config.json</code> outside the web root.</p>
   </div>
+  <div class="settings-tabs">
+    <div class="tabs">
+      <a href="<?= htmlspecialchars($tabUrl('card')) ?>" class="<?= $settingsTab==='card'?'active':'' ?>">🎨 Card Style</a>
+      <a href="<?= htmlspecialchars($tabUrl('locations')) ?>" class="<?= $settingsTab==='locations'?'active':'' ?>">📍 Locations <span class="count">(<?= count(LOCATIONS) ?>)</span></a>
+      <a href="<?= htmlspecialchars($tabUrl('enterprises')) ?>" class="<?= $settingsTab==='enterprises'?'active':'' ?>">🏢 Enterprises <span class="count">(<?= count(ENTERPRISES) ?>)</span></a>
+      <a href="<?= htmlspecialchars($tabUrl('users')) ?>" class="<?= $settingsTab==='users'?'active':'' ?>">👤 Users <span class="count">(<?= count(USERS) ?>)</span></a>
+    </div>
+  </div>
+  <div style="height:20px;"></div>
 
+  <?php if ($settingsTab === 'card'): ?>
+  <!-- Result Card Style -->
+  <?php
+    $variantOptions = [
+      'v1' => 'V1 · Definition list (document)',
+      'v2' => 'V2 · Timeline + pills',
+      'v3' => 'V3 · Flat grid (no boxes)',
+      'v4' => 'V4 · Certificate (formal)',
+      'v5' => 'V5 · Two-column hero (ID card)',
+      'v6' => 'V6 · Minimal typography',
+    ];
+    $currentVariant = CARD_VARIANT;
+  ?>
+  <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:20px;">
+    <h3 style="font-size:14px;font-weight:600;margin-bottom:6px;">🎨 Public Result Card Style</h3>
+    <p style="color:#6b7280;font-size:12.5px;margin-bottom:14px;">Controls how the verification result appears to the public on the home page. Change anytime — takes effect on the next lookup.</p>
+    <form method="POST" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+      <input type="hidden" name="action" value="set_card_variant"/>
+      <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+      <div class="form-group" style="flex:1;min-width:280px;margin-bottom:0;">
+        <label>Card Layout</label>
+        <select name="card_variant" required>
+          <?php foreach ($variantOptions as $k => $label): ?>
+            <option value="<?= htmlspecialchars($k) ?>" <?= $k === $currentVariant ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-success btn-sm" style="height:42px;">Save Style</button>
+    </form>
+    <p style="font-size:12px;color:#6b7280;margin-top:10px;">Current: <strong><?= htmlspecialchars($variantOptions[$currentVariant] ?? $currentVariant) ?></strong>. Preview all six at <a href="preview-result.html" target="_blank" style="color:#0066cc;">preview-result.html</a>.</p>
+  </div>
+  <?php endif; // card ?>
+
+  <?php if ($settingsTab === 'locations'): ?>
   <!-- Locations -->
   <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:20px;">
     <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">📍 Locations</h3>
@@ -1253,7 +1346,9 @@ function pageUrl(array $extra = []): string {
       </tbody>
     </table>
   </div>
+  <?php endif; // locations ?>
 
+  <?php if ($settingsTab === 'enterprises'): ?>
   <!-- Enterprises -->
   <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:20px;">
     <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">🏢 Enterprises (Legal Entities)</h3>
@@ -1302,7 +1397,9 @@ function pageUrl(array $extra = []): string {
       </tbody>
     </table>
   </div>
+  <?php endif; // enterprises ?>
 
+  <?php if ($settingsTab === 'users'): ?>
   <!-- Users -->
   <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:24px;">
     <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">👤 Users</h3>
@@ -1380,6 +1477,7 @@ function pageUrl(array $extra = []): string {
       </tbody>
     </table>
   </div>
+  <?php endif; // users ?>
 
   <!-- Location Edit Modal -->
   <div class="modal-overlay" id="locEditModal" style="display:none;">

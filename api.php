@@ -35,6 +35,20 @@ function loadData(): array {
     return is_array($data) ? $data : [];
 }
 
+// Read card variant from tt-config.json (outside webroot preferred).
+function cardVariant(): string {
+    $candidates = [dirname(__DIR__) . '/tt-config.json', __DIR__ . '/tt-config.json'];
+    foreach ($candidates as $f) {
+        if (file_exists($f)) {
+            $d = json_decode(@file_get_contents($f), true);
+            $v = is_array($d) ? ($d['card_variant'] ?? '') : '';
+            if (in_array($v, ['v1','v2','v3','v4','v5','v6'], true)) return $v;
+            break;
+        }
+    }
+    return 'v5';
+}
+
 $ref = trim($_GET['ref'] ?? '');
 $dob = trim($_GET['dob'] ?? '');
 
@@ -64,6 +78,7 @@ foreach (loadData() as $record) {
             'separationType' => $record['separationType'],
             'location'       => $record['location']   ?? '',
             'enterprise'     => $record['enterprise'] ?? '',
+            'cardVariant'    => cardVariant(),
         ]);
         exit;
     }
