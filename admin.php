@@ -7,11 +7,28 @@
 // ── Secure session settings ──────────────────────────────────────────────────
 ini_set('session.cookie_httponly', 1);
 ini_set('session.cookie_samesite', 'Strict');
-ini_set('session.cookie_secure', 1); // enforced — HTTPS required by .htaccess
+// Production .htaccess forces HTTPS, so $_SERVER['HTTPS'] is always set there.
+// On the built-in PHP dev server (plain HTTP), gate this off so the session
+// cookie isn't dropped and login can be tested locally.
+$__isHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
+          || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+          || (($_SERVER['SERVER_PORT'] ?? '') === '443');
+ini_set('session.cookie_secure', $__isHttps ? 1 : 0);
 session_start();
 
 // Clean URL for this panel (avoids redirecting to blocked admin.php)
-define('ADMIN_URL', rtrim(str_replace('admin.php', 'admin', $_SERVER['SCRIPT_NAME']), '/'));
+// Resolve the public-facing admin URL.
+// - Apache prod: .htaccess rewrites /admin -> admin.php, so SCRIPT_NAME ends in admin.php.
+// - PHP built-in server via router.php: SCRIPT_NAME falls back to /index.html,
+//   so we derive from REQUEST_URI instead.
+$__sn = $_SERVER['SCRIPT_NAME'] ?? '';
+if (str_contains($__sn, 'admin.php')) {
+    define('ADMIN_URL', rtrim(str_replace('admin.php', 'admin', $__sn), '/'));
+} else {
+    $__uri = parse_url($_SERVER['REQUEST_URI'] ?? '/admin', PHP_URL_PATH) ?: '/admin';
+    $__uri = preg_replace('#/admin/?$#', '', $__uri);
+    define('ADMIN_URL', rtrim($__uri, '/') . '/admin');
+}
 
 // ── Session timeout: 30 minutes ──────────────────────────────────────────────
 if (isset($_SESSION['admin_auth'])) {
@@ -31,35 +48,129 @@ if (empty($_SESSION['csrf_token'])) {
 define('DATA_FILE',  __DIR__ . '/data.json');
 define('AUDIT_FILE', __DIR__ . '/audit.json');
 
-define('LOCATIONS', [
-    'Chicago, USA',
-    'Hyderabad, India',
-    'Manila, Philippines',
-    'Singapore',
-    'Kuala Lumpur, Malaysia',
-    'Sydney, Australia',
-    'Dubai, UAE',
-    'Bangkok, Thailand',
-    'Jakarta, Indonesia',
-]);
+// Config file lives OUTSIDE public_html when possible (same dir as tt-credentials.php).
+// Holds: locations, enterprises, users (with bcrypt hashes).
+$_cfgFile = dirname(__DIR__) . '/tt-config.json';
+if (!file_exists($_cfgFile) && file_exists(__DIR__ . '/tt-config.json')) {
+    $_cfgFile = __DIR__ . '/tt-config.json';
+}
+if (!file_exists($_cfgFile) && is_writable(dirname(__DIR__))) {
+    // Prefer outside-webroot location for first creation
+    // (fall through — bootstrapConfig will create it here)
+}
+define('CONFIG_FILE', $_cfgFile);
 
-// ── Credentials: loaded from OUTSIDE public_html ────────────────────────────
-// File: /home/YOUR_CPANEL_USERNAME/tt-credentials.php
-// This keeps passwords out of the web root entirely.
-// After uploading, move tt-credentials.php one level above public_html and
-// update the path below to match your cPanel username.
+// Legacy credentials file (seed source on first bootstrap, optional thereafter).
 $_credFile = dirname(__DIR__) . '/tt-credentials.php';
 if (!file_exists($_credFile)) {
-    // Fallback for local dev: look in same directory
     $_credFile = __DIR__ . '/tt-credentials.php';
 }
-if (!file_exists($_credFile)) {
-    http_response_code(500);
-    die('Server configuration error: credentials file not found.');
+if (file_exists($_credFile)) {
+    require_once $_credFile; // defines TT_USERS if present
 }
-require $_credFile;
-// TT_USERS constant is now defined by tt-credentials.php
-define('USERS', TT_USERS);
+
+// ── Config loader / saver / bootstrap ────────────────────────────────────────
+function configFile(): string {
+    if (defined('CONFIG_FILE') && CONFIG_FILE) return CONFIG_FILE;
+    return __DIR__ . '/tt-config.json';
+}
+
+function loadConfig(): array {
+    $f = configFile();
+    if (!file_exists($f)) return bootstrapConfig();
+    $d = json_decode(@file_get_contents($f), true);
+    if (!is_array($d) || empty($d['users'])) return bootstrapConfig();
+    $d['locations']   = $d['locations']   ?? [];
+    $d['enterprises'] = $d['enterprises'] ?? [];
+    $d['users']       = $d['users']       ?? [];
+    return $d;
+}
+
+function saveConfig(array $cfg): bool {
+    $json = json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if ($json === false) return false;
+    return file_put_contents(configFile(), $json, LOCK_EX) !== false;
+}
+
+function bootstrapConfig(): array {
+    $seedLocations = [
+        'Chicago, USA', 'Hyderabad, India', 'Manila, Philippines', 'Singapore',
+        'Kuala Lumpur, Malaysia', 'Sydney, Australia', 'Dubai, UAE',
+        'Bangkok, Thailand', 'Jakarta, Indonesia',
+    ];
+    $seedEnterprises = [
+        ['id'=>'ent_us', 'name'=>'TechTiera Corporation',                 'location'=>'Chicago, USA'],
+        ['id'=>'ent_in', 'name'=>'TechTiera Corporation India Pvt. Ltd.', 'location'=>'Hyderabad, India'],
+        ['id'=>'ent_sg', 'name'=>'TechTiera Pte. Ltd.',                   'location'=>'Singapore'],
+        ['id'=>'ent_my', 'name'=>'TechTiera Sdn. Bhd',                    'location'=>'Kuala Lumpur, Malaysia'],
+        ['id'=>'ent_ph', 'name'=>'TechTiera Services Inc.',               'location'=>'Manila, Philippines'],
+        ['id'=>'ent_id', 'name'=>'PT TechTiera Services',                 'location'=>'Jakarta, Indonesia'],
+    ];
+    $seedUsers = [];
+    if (defined('TT_USERS')) {
+        foreach (TT_USERS as $un => $u) {
+            $seedUsers[$un] = [
+                'password'   => $u['password'],
+                'role'       => $u['role'],
+                'location'   => $u['location'] ?? '',
+                'enterprise' => '',
+            ];
+        }
+    }
+    if (empty($seedUsers)) {
+        // No legacy credentials and no config — refuse to boot blank.
+        http_response_code(500);
+        die('Server configuration error: no credentials available. Place tt-credentials.php outside public_html.');
+    }
+    $cfg = ['locations'=>$seedLocations, 'enterprises'=>$seedEnterprises, 'users'=>$seedUsers];
+    saveConfig($cfg);
+
+    // One-time backfill: existing records without 'enterprise' → India default.
+    if (file_exists(DATA_FILE)) {
+        $data = json_decode(@file_get_contents(DATA_FILE), true);
+        if (is_array($data)) {
+            $changed = false;
+            foreach ($data as &$r) {
+                if (!isset($r['enterprise']) || $r['enterprise'] === '') {
+                    $r['enterprise'] = 'TechTiera Corporation India Pvt. Ltd.';
+                    $changed = true;
+                }
+            }
+            unset($r);
+            if ($changed) {
+                file_put_contents(
+                    DATA_FILE,
+                    json_encode(array_values($data), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
+                    LOCK_EX
+                );
+            }
+        }
+    }
+    return $cfg;
+}
+
+$_CONFIG = loadConfig();
+define('USERS',       $_CONFIG['users']);
+define('LOCATIONS',   $_CONFIG['locations']);
+define('ENTERPRISES', $_CONFIG['enterprises']);
+
+// ── Enterprise helpers ───────────────────────────────────────────────────────
+function enterprisesForLocation(string $loc): array {
+    return array_values(array_filter(ENTERPRISES, fn($e) => ($e['location'] ?? '') === $loc));
+}
+function matchEnterprise(string $raw, string $loc = ''): string {
+    $raw = trim($raw);
+    if (!$raw) return '';
+    $list = $loc ? enterprisesForLocation($loc) : ENTERPRISES;
+    foreach ($list as $e) {
+        if (strcasecmp($e['name'] ?? '', $raw) === 0) return $e['name'];
+    }
+    foreach ($list as $e) {
+        $n = $e['name'] ?? '';
+        if ($n && (stripos($n, $raw) !== false || stripos($raw, $n) !== false)) return $n;
+    }
+    return $raw; // pass-through (admin may type free-form name during transition)
+}
 
 // ── Data helpers ─────────────────────────────────────────────────────────────
 function loadData(): array {
@@ -94,8 +205,47 @@ function logAudit(string $user, string $action, string $ref, string $location, s
         'location' => $location,
         'detail'   => $detail,
     ]);
-    if (count($log) > 500) $log = array_slice($log, 0, 500);
-    file_put_contents(AUDIT_FILE, json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    // Monthly archive rotation: move entries from prior months to audit-YYYY-MM.json
+    $currentMonth = date('Y-m');
+    $keep = [];
+    $byMonth = [];
+    foreach ($log as $entry) {
+        $ts = $entry['ts'] ?? '';
+        $m  = substr($ts, 0, 7); // "YYYY-MM"
+        if ($m === '' || $m === $currentMonth) {
+            $keep[] = $entry;
+        } else {
+            $byMonth[$m][] = $entry;
+        }
+    }
+    foreach ($byMonth as $m => $entries) {
+        $archiveFile = __DIR__ . '/audit-' . $m . '.json';
+        $existing = [];
+        if (file_exists($archiveFile)) {
+            $d = json_decode(@file_get_contents($archiveFile), true);
+            if (is_array($d)) $existing = $d;
+        }
+        $merged = array_merge($entries, $existing); // newer first
+        // Atomic write: tmp file + rename so power-failure mid-write cannot corrupt the archive.
+        $tmp = $archiveFile . '.tmp';
+        if (file_put_contents($tmp, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX) !== false) {
+            @rename($tmp, $archiveFile);
+        }
+    }
+    // Safety cap: even within current month, never exceed 500 (rare; archives separately).
+    if (count($keep) > 500) {
+        $overflow = array_slice($keep, 500);
+        $keep     = array_slice($keep, 0, 500);
+        $overflowFile = __DIR__ . '/audit-' . $currentMonth . '.json';
+        $existing = [];
+        if (file_exists($overflowFile)) {
+            $d = json_decode(@file_get_contents($overflowFile), true);
+            if (is_array($d)) $existing = $d;
+        }
+        $merged = array_merge($overflow, $existing);
+        file_put_contents($overflowFile, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    }
+    file_put_contents(AUDIT_FILE, json_encode($keep, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
 }
 
 // Display YYYY-MM-DD as DD-MM-YYYY in tables
@@ -149,10 +299,12 @@ function matchLocation(string $raw): string {
     return $raw;
 }
 
-function cleanRow(array $colMap, array $row, string $location = ''): array {
+function cleanRow(array $colMap, array $row, string $location = '', string $enterprise = ''): array {
     $get = fn($key) => isset($colMap[$key]) && $colMap[$key] !== false
         ? trim($row[$colMap[$key]] ?? '') : '';
     $rawLoc = $location ?: $get('location');
+    $matchedLoc = matchLocation($rawLoc);
+    $rawEnt = $enterprise !== '' ? $enterprise : $get('enterprise');
     $allowedSep = ['voluntary', 'involuntary', 'project end'];
     $sep = strtolower(trim($get('separationType')));
     if (!in_array($sep, $allowedSep, true)) $sep = 'voluntary';
@@ -161,7 +313,8 @@ function cleanRow(array $colMap, array $row, string $location = ''): array {
         'reference'      => sanitizeText($get('reference'), 50),
         'legalName'      => sanitizeText($get('legalName'), 150),
         'role'           => sanitizeText($get('role'), 150),
-        'location'       => matchLocation($rawLoc),
+        'location'       => $matchedLoc,
+        'enterprise'     => sanitizeText(matchEnterprise($rawEnt, $matchedLoc), 200),
         'dob'            => validateDate($get('dob')),
         'startDate'      => validateDate($get('startDate')),
         'endDate'        => validateDate($get('endDate')),
@@ -176,29 +329,34 @@ if (isset($_GET['download']) && $_GET['download'] === 'template' && isset($_SESS
     $myLoc = $_SESSION['user_location'] ?? '';
 
     $headers = $isAdm
-        ? ['Employee ID','Name','Role','Location','DOB','Start Date','End Date','Separation Type']
-        : ['Employee ID','Name','Role','DOB','Start Date','End Date','Separation Type'];
+        ? ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type']
+        : ['Employee ID','Name','Role','Enterprise','DOB','Start Date','End Date','Separation Type'];
 
-    $note = 'NOTE: Replace example rows below with real data. Rows starting with EXAMPLE- or NOTE: are skipped automatically.';
+    $defaultEnt = $_SESSION['user_enterprise'] ?? '';
+    $note = $isAdm
+        ? 'NOTE: Replace example rows. Enterprise must match a configured entity for the row\'s location.'
+        : ($defaultEnt
+            ? "NOTE: Replace example rows. Leave Enterprise blank to auto-fill with: {$defaultEnt}."
+            : 'NOTE: Replace example rows. Enterprise column accepts any entity configured for your location.');
 
     $rows = $isAdm ? [
-        ['EXAMPLE-001','Full Legal Name','Software Engineer',  'Chicago, USA',          '1990-01-15','2022-03-01','2025-12-31','voluntary'],
-        ['EXAMPLE-002','Full Legal Name','Project Manager',    'Hyderabad, India',      '1988-06-20','2021-07-15','2025-11-30','involuntary'],
-        ['EXAMPLE-003','Full Legal Name','Business Analyst',   'Manila, Philippines',   '1992-11-05','2023-01-10','2025-10-15','project end'],
-        ['EXAMPLE-004','Full Legal Name','Operations Lead',    'Singapore',             '1991-03-22','2020-09-01','2025-08-31','voluntary'],
-        ['EXAMPLE-005','Full Legal Name','HR Coordinator',     'Kuala Lumpur, Malaysia','1994-07-14','2022-06-15','2025-07-20','involuntary'],
-        ['EXAMPLE-006','Full Legal Name','Finance Analyst',    'Sydney, Australia',     '1989-12-01','2019-04-01','2025-06-30','voluntary'],
-        ['EXAMPLE-007','Full Legal Name','Recruitment Lead',   'Dubai, UAE',            '1993-09-18','2021-11-01','2025-05-15','project end'],
-        ['EXAMPLE-008','Full Legal Name','Training Specialist','Bangkok, Thailand',     '1995-05-30','2023-02-01','2025-09-30','involuntary'],
-        ['EXAMPLE-009','Full Legal Name','Admin Executive',    'Jakarta, Indonesia',    '1996-08-10','2022-08-15','2025-11-01','voluntary'],
+        ['EXAMPLE-001','Full Legal Name','Software Engineer',  'Chicago, USA',          'TechTiera Corporation',                 '1990-01-15','2022-03-01','2025-12-31','voluntary'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',    'Hyderabad, India',      'TechTiera Corporation India Pvt. Ltd.', '1988-06-20','2021-07-15','2025-11-30','involuntary'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',   'Manila, Philippines',   'TechTiera Services Inc.',               '1992-11-05','2023-01-10','2025-10-15','project end'],
+        ['EXAMPLE-004','Full Legal Name','Operations Lead',    'Singapore',             'TechTiera Pte. Ltd.',                   '1991-03-22','2020-09-01','2025-08-31','voluntary'],
+        ['EXAMPLE-005','Full Legal Name','HR Coordinator',     'Kuala Lumpur, Malaysia','TechTiera Sdn. Bhd',                    '1994-07-14','2022-06-15','2025-07-20','involuntary'],
+        ['EXAMPLE-006','Full Legal Name','Finance Analyst',    'Sydney, Australia',     '',                                      '1989-12-01','2019-04-01','2025-06-30','voluntary'],
+        ['EXAMPLE-007','Full Legal Name','Recruitment Lead',   'Dubai, UAE',            '',                                      '1993-09-18','2021-11-01','2025-05-15','project end'],
+        ['EXAMPLE-008','Full Legal Name','Training Specialist','Bangkok, Thailand',     '',                                      '1995-05-30','2023-02-01','2025-09-30','involuntary'],
+        ['EXAMPLE-009','Full Legal Name','Admin Executive',    'Jakarta, Indonesia',    'PT TechTiera Services',                 '1996-08-10','2022-08-15','2025-11-01','voluntary'],
     ] : [
-        ['EXAMPLE-001','Full Legal Name','Software Engineer','1990-01-15','2022-03-01','2025-12-31','voluntary'],
-        ['EXAMPLE-002','Full Legal Name','Project Manager',  '1988-06-20','2021-07-15','2025-11-30','involuntary'],
-        ['EXAMPLE-003','Full Legal Name','Business Analyst', '1992-11-05','2023-01-10','2025-10-15','project end'],
-        ['EXAMPLE-004','Full Legal Name','Operations Lead',  '1991-03-22','2020-09-01','2025-08-31','voluntary'],
-        ['EXAMPLE-005','Full Legal Name','HR Coordinator',   '1994-07-14','2022-06-15','2025-07-20','involuntary'],
-        ['EXAMPLE-006','Full Legal Name','Finance Analyst',  '1989-12-01','2019-04-01','2025-06-30','voluntary'],
-        ['EXAMPLE-007','Full Legal Name','Recruitment Lead', '1993-09-18','2021-11-01','2025-05-15','project end'],
+        ['EXAMPLE-001','Full Legal Name','Software Engineer', $defaultEnt, '1990-01-15','2022-03-01','2025-12-31','voluntary'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',   $defaultEnt, '1988-06-20','2021-07-15','2025-11-30','involuntary'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',  $defaultEnt, '1992-11-05','2023-01-10','2025-10-15','project end'],
+        ['EXAMPLE-004','Full Legal Name','Operations Lead',   $defaultEnt, '1991-03-22','2020-09-01','2025-08-31','voluntary'],
+        ['EXAMPLE-005','Full Legal Name','HR Coordinator',    $defaultEnt, '1994-07-14','2022-06-15','2025-07-20','involuntary'],
+        ['EXAMPLE-006','Full Legal Name','Finance Analyst',   $defaultEnt, '1989-12-01','2019-04-01','2025-06-30','voluntary'],
+        ['EXAMPLE-007','Full Legal Name','Recruitment Lead',  $defaultEnt, '1993-09-18','2021-11-01','2025-05-15','project end'],
     ];
 
     $filename = $isAdm ? 'upload-template-admin.csv' : 'upload-template-' . preg_replace('/[^a-z0-9]/i','-', strtolower($myLoc)) . '.csv';
@@ -234,11 +392,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($user && password_verify($password, $user['password'])) {
                 @file_put_contents($rlFile, json_encode(['attempts' => 0, 'lockout_until' => 0]), LOCK_EX);
                 session_regenerate_id(true);
-                $_SESSION['admin_auth']    = true;
-                $_SESSION['user_role']     = $user['role'];
-                $_SESSION['user_location'] = $user['location'];
-                $_SESSION['username']      = $username;
-                $_SESSION['last_activity'] = time();
+                $_SESSION['admin_auth']      = true;
+                $_SESSION['user_role']       = $user['role'];
+                $_SESSION['user_location']   = $user['location']   ?? '';
+                $_SESSION['user_enterprise'] = $user['enterprise'] ?? '';
+                $_SESSION['username']        = $username;
+                $_SESSION['last_activity']   = time();
                 header('Location: ' . ADMIN_URL); exit;
             } else {
                 $rl['attempts']++;
@@ -253,6 +412,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 @file_put_contents($rlFile, json_encode($rl), LOCK_EX);
             }
         }
+        // Login failure: skip auth wall + CSRF check below so the login page
+        // can re-render with the $error flash. (Success path already exit'd.)
+        goto done;
     }
 
     // ── Logout ────────────────────────────────────────────────────────────────
@@ -301,11 +463,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'legalName'      => $find(['name','legalname','fullname','employeename']),
                         'role'           => $find(['role','jobtitle','designation','title','position']),
                         'location'       => $find(['location','office','city','branch']),
+                        'enterprise'     => $find(['enterprise','entity','company','legalentity','organization','organisation']),
                         'dob'            => $find(['dob','dateofbirth','birthdate']),
                         'startDate'      => $find(['startdate','start','joiningdate','dateofjoining']),
                         'endDate'        => $find(['enddate','end','lastworkingdate','relievingdate']),
                         'separationType' => $find(['separationtype','separation','terminationtype','termination','exittype']),
                     ];
+                    $myEnt    = $_SESSION['user_enterprise'] ?? '';
+                    $forceEnt = (!$isAdminAction && $myEnt) ? $myEnt : '';
                     while (($row = fgetcsv($handle)) !== false) {
                         if (count(array_filter($row)) === 0) continue;
                         // Skip example/note rows
@@ -313,7 +478,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if (preg_match('/^(e\.g\.|example[-\s]|example$|sample|notes?$|note:|format)/i', $refVal)) continue;
                         // Non-admin: force location to their own
                         $loc    = $isAdminAction ? '' : $myLocation;
-                        $record = cleanRow($colMap, $row, $loc);
+                        $record = cleanRow($colMap, $row, $loc, $forceEnt);
+                        // Default enterprise to user's primary if still blank
+                        if ($record['enterprise'] === '' && $myEnt) {
+                            $record['enterprise'] = $myEnt;
+                        }
                         if ($record['reference']) $parsed[] = $record;
                     }
                 }
@@ -354,6 +523,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Enterprise scope (location user may be scoped to specific enterprise)
+    $myEnterprise = $_SESSION['user_enterprise'] ?? '';
+
     // ── Add record ────────────────────────────────────────────────────────────
     if ($action === 'add_record') {
         $sep    = strtolower(trim($_POST['separationType'] ?? ''));
@@ -361,6 +533,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$newRef) { $error = 'Employee ID is required.'; goto done; }
         if (!in_array($sep, $allowedSep, true)) { $error = 'Invalid separation type.'; goto done; }
         $loc  = $isAdminAction ? trim($_POST['location'] ?? '') : $myLocation;
+        // Enterprise: admin/unconstrained → form value; constrained user → forced
+        $entIn = trim($_POST['enterprise'] ?? '');
+        $ent   = matchEnterprise($entIn, $loc);
+        if (!$isAdminAction && $myEnterprise) $ent = $myEnterprise;
         $data = loadData();
         // Duplicate Employee ID check
         $existing = array_map('strtolower', array_column($data, 'reference'));
@@ -374,6 +550,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'legalName'      => sanitizeText(trim($_POST['legalName'] ?? ''), 150),
             'role'           => sanitizeText(trim($_POST['role'] ?? ''), 150),
             'location'       => $loc,
+            'enterprise'     => sanitizeText($ent, 200),
             'dob'            => normalizeDate(trim($_POST['dob'] ?? '')),
             'startDate'      => normalizeDate(trim($_POST['startDate'] ?? '')),
             'endDate'        => normalizeDate(trim($_POST['endDate'] ?? '')),
@@ -397,10 +574,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$isAdminAction && ($record['location'] ?? '') !== $myLocation) {
                 $error = 'Access denied.'; goto done;
             }
+            // Enterprise-scoped users can only edit own-enterprise records
+            if (!$isAdminAction && $myEnterprise && ($record['enterprise'] ?? '') !== $myEnterprise) {
+                $error = 'Access denied.'; goto done;
+            }
+            $newLoc = $isAdminAction ? trim($_POST['location'] ?? '') : $myLocation;
+            $entIn  = trim($_POST['enterprise'] ?? '');
+            $newEnt = matchEnterprise($entIn, $newLoc);
+            if (!$isAdminAction && $myEnterprise) $newEnt = $myEnterprise;
             $record['reference']      = trim($_POST['reference']);
             $record['legalName']      = trim($_POST['legalName']);
             $record['role']           = trim($_POST['role'] ?? '');
-            $record['location']       = $isAdminAction ? trim($_POST['location'] ?? '') : $myLocation;
+            $record['location']       = $newLoc;
+            $record['enterprise']     = sanitizeText($newEnt, 200);
             $record['dob']            = normalizeDate(trim($_POST['dob']));
             $record['startDate']      = normalizeDate(trim($_POST['startDate']));
             $record['endDate']        = normalizeDate(trim($_POST['endDate']));
@@ -408,6 +594,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $record['lastUpdated']    = nowStamp();
             break;
         }
+        unset($record);
         if (!saveData($data)) { $error = 'Failed to write data.json — check file permissions.'; goto done; }
         $editRef = trim($_POST['reference'] ?? '');
         $editLoc = $isAdminAction ? trim($_POST['location'] ?? '') : $myLocation;
@@ -425,6 +612,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($target && !$isAdminAction && ($target['location'] ?? '') !== $myLocation) {
             $error = 'Access denied.'; goto done;
         }
+        if ($target && !$isAdminAction && $myEnterprise && ($target['enterprise'] ?? '') !== $myEnterprise) {
+            $error = 'Access denied.'; goto done;
+        }
         if (!saveData(array_values(array_filter($data, fn($r) => $r['id'] !== $id)))) {
             $error = 'Failed to write data.json — check file permissions.'; goto done;
         }
@@ -437,18 +627,277 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: ' . ADMIN_URL . '?msg=deleted'); exit;
     }
 
+    // ── Settings (admin-only) — locations, enterprises, users ────────────────
+    $settingsActions = [
+        'add_location','edit_location','delete_location',
+        'add_enterprise','edit_enterprise','delete_enterprise',
+        'add_user','edit_user','delete_user',
+    ];
+    if (in_array($action, $settingsActions, true)) {
+        if (!$isAdminAction) { http_response_code(403); die('Forbidden.'); }
+        $cfg = loadConfig();
+
+        if ($action === 'add_location') {
+            $name = trim($_POST['name'] ?? '');
+            if ($name === '' || strlen($name) > 100) { $error = 'Invalid location name.'; goto done; }
+            foreach ($cfg['locations'] as $l) {
+                if (strcasecmp($l, $name) === 0) { $error = 'Location already exists.'; goto done; }
+            }
+            $cfg['locations'][] = $name;
+            sort($cfg['locations']);
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $name, 'add location');
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=loc_added'); exit;
+        }
+
+        if ($action === 'edit_location') {
+            $oldName = trim($_POST['old_name'] ?? '');
+            $newName = trim($_POST['new_name'] ?? '');
+            if ($newName === '' || strlen($newName) > 100) { $error = 'Invalid location name.'; goto done; }
+            if (!in_array($oldName, $cfg['locations'], true)) { $error = 'Location not found.'; goto done; }
+            if ($oldName === $newName) {
+                header('Location: ' . ADMIN_URL . '?page=settings'); exit;
+            }
+            foreach ($cfg['locations'] as $l) {
+                if (strcasecmp($l, $newName) === 0) { $error = 'Location "' . htmlspecialchars($newName) . '" already exists.'; goto done; }
+            }
+            // Rename in locations array
+            foreach ($cfg['locations'] as &$l) {
+                if ($l === $oldName) { $l = $newName; break; }
+            }
+            unset($l);
+            sort($cfg['locations']);
+            // Cascade: enterprises
+            foreach ($cfg['enterprises'] as &$e) {
+                if (($e['location'] ?? '') === $oldName) $e['location'] = $newName;
+            }
+            unset($e);
+            // Cascade: users
+            foreach ($cfg['users'] as &$u) {
+                if (($u['location'] ?? '') === $oldName) $u['location'] = $newName;
+            }
+            unset($u);
+            // Cascade: records
+            $recs = loadData();
+            $touched = 0;
+            foreach ($recs as &$r) {
+                if (($r['location'] ?? '') === $oldName) { $r['location'] = $newName; $touched++; }
+            }
+            unset($r);
+            // Save config FIRST; if records save fails after, config + records are mismatched
+            // but at least the new name is authoritative. Save records before config = old name
+            // lingers in config while records reference new name = harder to recover.
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            if ($touched > 0 && !saveData($recs)) { $error = 'Failed to write data.json — config saved but records not updated. Re-run edit to retry.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $newName, 'edit location: ' . $oldName . ' → ' . $newName . ' (records updated: ' . $touched . ')');
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=loc_edited'); exit;
+        }
+
+        if ($action === 'delete_location') {
+            $name = trim($_POST['name'] ?? '');
+            // Block if records use this location
+            $allRecs = loadData();
+            foreach ($allRecs as $r) {
+                if (($r['location'] ?? '') === $name) {
+                    $error = 'Cannot delete: records still assigned to "' . htmlspecialchars($name) . '".';
+                    goto done;
+                }
+            }
+            // Block if users or enterprises depend on it
+            foreach ($cfg['users'] as $u) {
+                if (($u['location'] ?? '') === $name) {
+                    $error = 'Cannot delete: a user is scoped to this location.';
+                    goto done;
+                }
+            }
+            foreach ($cfg['enterprises'] as $e) {
+                if (($e['location'] ?? '') === $name) {
+                    $error = 'Cannot delete: enterprises still tied to this location.';
+                    goto done;
+                }
+            }
+            $cfg['locations'] = array_values(array_filter($cfg['locations'], fn($l) => $l !== $name));
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $name, 'delete location');
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=loc_deleted'); exit;
+        }
+
+        if ($action === 'add_enterprise') {
+            $name = trim($_POST['name'] ?? '');
+            $loc  = trim($_POST['location'] ?? '');
+            if ($name === '' || strlen($name) > 200) { $error = 'Invalid enterprise name.'; goto done; }
+            if (!in_array($loc, $cfg['locations'], true)) { $error = 'Invalid location.'; goto done; }
+            foreach ($cfg['enterprises'] as $e) {
+                if (strcasecmp($e['name'], $name) === 0) { $error = 'Enterprise already exists.'; goto done; }
+            }
+            $cfg['enterprises'][] = ['id' => uniqid('ent_'), 'name' => $name, 'location' => $loc];
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $loc, 'add enterprise: ' . $name);
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=ent_added'); exit;
+        }
+
+        if ($action === 'edit_enterprise') {
+            $entId   = trim($_POST['id'] ?? '');
+            $newName = trim($_POST['name'] ?? '');
+            $newLoc  = trim($_POST['location'] ?? '');
+            if ($newName === '' || strlen($newName) > 200) { $error = 'Invalid enterprise name.'; goto done; }
+            if (!in_array($newLoc, $cfg['locations'], true)) { $error = 'Invalid location.'; goto done; }
+            $oldName = '';
+            foreach ($cfg['enterprises'] as &$e) {
+                if ($e['id'] === $entId) {
+                    $oldName = $e['name'];
+                    $e['name']     = $newName;
+                    $e['location'] = $newLoc;
+                    break;
+                }
+            }
+            unset($e);
+            if (!$oldName) { $error = 'Enterprise not found.'; goto done; }
+            // Rename across records + users
+            if ($oldName !== $newName) {
+                $recs = loadData();
+                foreach ($recs as &$r) {
+                    if (($r['enterprise'] ?? '') === $oldName) $r['enterprise'] = $newName;
+                }
+                unset($r);
+                saveData($recs);
+                foreach ($cfg['users'] as &$u) {
+                    if (($u['enterprise'] ?? '') === $oldName) $u['enterprise'] = $newName;
+                }
+                unset($u);
+            }
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $newLoc, 'edit enterprise: ' . $oldName . ' → ' . $newName);
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=ent_edited'); exit;
+        }
+
+        if ($action === 'delete_enterprise') {
+            $entId = trim($_POST['id'] ?? '');
+            $target = null;
+            foreach ($cfg['enterprises'] as $e) { if ($e['id'] === $entId) { $target = $e; break; } }
+            if (!$target) { $error = 'Enterprise not found.'; goto done; }
+            $targetNorm = strtolower(trim($target['name']));
+            $allRecs = loadData();
+            foreach ($allRecs as $r) {
+                if (strtolower(trim($r['enterprise'] ?? '')) === $targetNorm) {
+                    $error = 'Cannot delete: records still assigned to "' . htmlspecialchars($target['name']) . '".';
+                    goto done;
+                }
+            }
+            foreach ($cfg['users'] as $u) {
+                if (strtolower(trim($u['enterprise'] ?? '')) === $targetNorm) {
+                    $error = 'Cannot delete: a user is scoped to this enterprise.';
+                    goto done;
+                }
+            }
+            $cfg['enterprises'] = array_values(array_filter($cfg['enterprises'], fn($e) => $e['id'] !== $entId));
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $target['location'], 'delete enterprise: ' . $target['name']);
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=ent_deleted'); exit;
+        }
+
+        if ($action === 'add_user') {
+            $un   = strtolower(trim($_POST['username'] ?? ''));
+            $pw   = (string)($_POST['password'] ?? '');
+            $role = trim($_POST['role'] ?? '');
+            $loc  = trim($_POST['location'] ?? '');
+            $ent  = trim($_POST['enterprise'] ?? '');
+            if (!preg_match('/^[a-z0-9_-]{3,32}$/', $un)) { $error = 'Username must be 3–32 chars, lowercase a-z, 0-9, _ or -.'; goto done; }
+            if (strlen($pw) < 8 || strlen($pw) > 200) { $error = 'Password must be 8–200 characters.'; goto done; }
+            if (!in_array($role, ['admin','location'], true)) { $error = 'Invalid role.'; goto done; }
+            if (isset($cfg['users'][$un])) { $error = 'Username already exists.'; goto done; }
+            if ($role === 'location') {
+                if (!in_array($loc, $cfg['locations'], true)) { $error = 'Location is required for location users.'; goto done; }
+                if ($ent !== '') {
+                    $ok = false;
+                    foreach ($cfg['enterprises'] as $e) {
+                        if ($e['name'] === $ent && $e['location'] === $loc) { $ok = true; break; }
+                    }
+                    if (!$ok) { $error = 'Enterprise must belong to the selected location.'; goto done; }
+                }
+            } else {
+                $loc = ''; $ent = '';
+            }
+            $cfg['users'][$un] = [
+                'password'   => password_hash($pw, PASSWORD_BCRYPT, ['cost' => 12]),
+                'role'       => $role,
+                'location'   => $loc,
+                'enterprise' => $ent,
+            ];
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $loc, 'add user: ' . $un);
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=user_added'); exit;
+        }
+
+        if ($action === 'edit_user') {
+            $un   = strtolower(trim($_POST['username'] ?? ''));
+            $role = trim($_POST['role'] ?? '');
+            $loc  = trim($_POST['location'] ?? '');
+            $ent  = trim($_POST['enterprise'] ?? '');
+            $pw   = (string)($_POST['password'] ?? '');
+            if (!isset($cfg['users'][$un])) { $error = 'User not found.'; goto done; }
+            if (!in_array($role, ['admin','location'], true)) { $error = 'Invalid role.'; goto done; }
+            // Prevent demoting the only admin
+            if ($role !== 'admin' && $cfg['users'][$un]['role'] === 'admin') {
+                $admins = array_filter($cfg['users'], fn($u) => $u['role'] === 'admin');
+                if (count($admins) <= 1) { $error = 'Cannot demote the last admin.'; goto done; }
+            }
+            if ($role === 'location') {
+                if (!in_array($loc, $cfg['locations'], true)) { $error = 'Location is required for location users.'; goto done; }
+                if ($ent !== '') {
+                    $ok = false;
+                    foreach ($cfg['enterprises'] as $e) {
+                        if ($e['name'] === $ent && $e['location'] === $loc) { $ok = true; break; }
+                    }
+                    if (!$ok) { $error = 'Enterprise must belong to the selected location.'; goto done; }
+                }
+            } else {
+                $loc = ''; $ent = '';
+            }
+            $cfg['users'][$un]['role']       = $role;
+            $cfg['users'][$un]['location']   = $loc;
+            $cfg['users'][$un]['enterprise'] = $ent;
+            if ($pw !== '') {
+                if (strlen($pw) < 8 || strlen($pw) > 200) { $error = 'Password must be 8–200 characters.'; goto done; }
+                $cfg['users'][$un]['password'] = password_hash($pw, PASSWORD_BCRYPT, ['cost' => 12]);
+            }
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', $loc, 'edit user: ' . $un . ($pw !== '' ? ' (password reset)' : ''));
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=user_edited'); exit;
+        }
+
+        if ($action === 'delete_user') {
+            $un = strtolower(trim($_POST['username'] ?? ''));
+            if (!isset($cfg['users'][$un])) { $error = 'User not found.'; goto done; }
+            if ($un === ($_SESSION['username'] ?? '')) { $error = 'You cannot delete your own account.'; goto done; }
+            if ($cfg['users'][$un]['role'] === 'admin') {
+                $admins = array_filter($cfg['users'], fn($u) => $u['role'] === 'admin');
+                if (count($admins) <= 1) { $error = 'Cannot delete the last admin.'; goto done; }
+            }
+            unset($cfg['users'][$un]);
+            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
+            logAudit($_SESSION['username'] ?? '', 'settings', '', '', 'delete user: ' . $un);
+            header('Location: ' . ADMIN_URL . '?page=settings&msg=user_deleted'); exit;
+        }
+    }
+
     done:
 }
 
 // ── View variables ────────────────────────────────────────────────────────────
-$isLoggedIn  = isset($_SESSION['admin_auth']);
-$isAdmin     = $isLoggedIn && ($_SESSION['user_role']     ?? '') === 'admin';
-$myLocation  = $_SESSION['user_location'] ?? '';
-$username    = $_SESSION['username']      ?? '';
+$isLoggedIn   = isset($_SESSION['admin_auth']);
+$isAdmin      = $isLoggedIn && ($_SESSION['user_role']     ?? '') === 'admin';
+$myLocation   = $_SESSION['user_location']   ?? '';
+$myEnterprise = $_SESSION['user_enterprise'] ?? '';
+$username     = $_SESSION['username']        ?? '';
+$adminPage    = trim($_GET['page'] ?? '');
 
 $records = $isLoggedIn ? loadData() : [];
 if (!$isAdmin && $myLocation !== '') {
     $records = array_values(array_filter($records, fn($r) => ($r['location'] ?? '') === $myLocation));
+}
+if (!$isAdmin && $myEnterprise !== '') {
+    $records = array_values(array_filter($records, fn($r) => ($r['enterprise'] ?? '') === $myEnterprise));
 }
 $total    = count($records);
 $search   = trim($_GET['q'] ?? '');
@@ -456,19 +905,24 @@ $filtered = $records;
 if ($search) {
     $q        = strtolower($search);
     $filtered = array_values(array_filter($records, fn($r) =>
-        str_contains(strtolower($r['reference'] ?? ''), $q) ||
-        str_contains(strtolower($r['legalName'] ?? ''), $q) ||
-        str_contains(strtolower($r['role']      ?? ''), $q) ||
-        str_contains(strtolower($r['location']  ?? ''), $q)
+        str_contains(strtolower($r['reference']  ?? ''), $q) ||
+        str_contains(strtolower($r['legalName']  ?? ''), $q) ||
+        str_contains(strtolower($r['role']       ?? ''), $q) ||
+        str_contains(strtolower($r['location']   ?? ''), $q) ||
+        str_contains(strtolower($r['enterprise'] ?? ''), $q)
     ));
 }
-$filterType     = trim($_GET['type'] ?? '');
-$filterLocation = $isAdmin ? trim($_GET['loc'] ?? '') : '';
+$filterType       = trim($_GET['type'] ?? '');
+$filterLocation   = $isAdmin ? trim($_GET['loc'] ?? '') : '';
+$filterEnterprise = trim($_GET['ent'] ?? '');
 if ($filterType !== '') {
     $filtered = array_values(array_filter($filtered, fn($r) => strcasecmp($r['separationType'] ?? '', $filterType) === 0));
 }
 if ($filterLocation !== '') {
     $filtered = array_values(array_filter($filtered, fn($r) => ($r['location'] ?? '') === $filterLocation));
+}
+if ($filterEnterprise !== '') {
+    $filtered = array_values(array_filter($filtered, fn($r) => ($r['enterprise'] ?? '') === $filterEnterprise));
 }
 
 // ── CSV Export (uses same filters/scope as the table view) ────────────────────
@@ -477,13 +931,14 @@ if (isset($_GET['download']) && $_GET['download'] === 'export' && $isLoggedIn) {
     header('Content-Disposition: attachment; filename="employees-export-' . date('Y-m-d') . '.csv"');
     header('Cache-Control: no-cache');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['Employee ID','Name','Role','Location','DOB','Start Date','End Date','Separation Type','Last Updated']);
+    fputcsv($out, ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type','Last Updated']);
     foreach ($filtered as $r) {
         fputcsv($out, [
             $r['reference']      ?? '',
             $r['legalName']      ?? '',
             $r['role']           ?? '',
             $r['location']       ?? '',
+            $r['enterprise']     ?? '',
             $r['dob']            ?? '',
             $r['startDate']      ?? '',
             $r['endDate']        ?? '',
@@ -507,9 +962,10 @@ $paginated     = array_slice($filtered, ($page - 1) * $perPage, $perPage);
 function pageUrl(array $extra = []): string {
     $params = array_merge(
         array_filter([
-            'q'    => trim($_GET['q']   ?? ''),
+            'q'    => trim($_GET['q']    ?? ''),
             'type' => trim($_GET['type'] ?? ''),
             'loc'  => trim($_GET['loc']  ?? ''),
+            'ent'  => trim($_GET['ent']  ?? ''),
             'pp'   => ($_GET['pp'] ?? '') !== '50' ? ($_GET['pp'] ?? '') : '',
         ]),
         $extra
@@ -665,6 +1121,8 @@ function pageUrl(array $extra = []): string {
       <a href="/" class="portal-link" style="color:#94a3b8;">View Public Portal →</a>
       <a href="/manual" class="portal-link" style="color:#94a3b8;" target="_blank">Help →</a>
       <?php if ($isAdmin): ?>
+      <a href="<?= ADMIN_URL ?>" class="portal-link" style="color:#94a3b8;">Dashboard</a>
+      <a href="<?= ADMIN_URL ?>?page=settings" class="portal-link" style="color:#94a3b8;">Settings →</a>
       <a href="<?= ADMIN_URL ?>?page=audit" class="portal-link" style="color:#94a3b8;">Audit Log →</a>
       <?php endif; ?>
       <form method="POST" style="display:inline;">
@@ -718,6 +1176,392 @@ function pageUrl(array $extra = []): string {
   <?php if ($success): ?><div class="flash success">✓ <?= htmlspecialchars($success) ?></div><?php endif; ?>
   <?php if ($error):   ?><div class="flash error">⚠ <?= htmlspecialchars($error) ?></div><?php endif; ?>
 
+  <?php
+    // Settings flash messages
+    $settingsMsgMap = [
+      'loc_added'=>'Location added.','loc_edited'=>'Location updated.','loc_deleted'=>'Location deleted.',
+      'ent_added'=>'Enterprise added.','ent_edited'=>'Enterprise updated.','ent_deleted'=>'Enterprise deleted.',
+      'user_added'=>'User added.','user_edited'=>'User updated.','user_deleted'=>'User deleted.',
+    ];
+    if ($adminPage === 'settings' && isset($settingsMsgMap[$msgGet])):
+  ?><div class="flash success">✓ <?= htmlspecialchars($settingsMsgMap[$msgGet]) ?></div><?php endif; ?>
+
+  <?php if ($adminPage === 'settings' && $isAdmin): ?>
+  <!-- ── SETTINGS PAGE ─────────────────────────────────────────────────────── -->
+  <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:24px;">
+    <h2 style="font-size:18px;font-weight:600;margin-bottom:6px;">Settings</h2>
+    <p style="color:#6b7280;font-size:13px;margin-bottom:0;">Manage locations, enterprises, and user accounts. Stored in <code>tt-config.json</code> outside the web root.</p>
+  </div>
+
+  <!-- Locations -->
+  <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:20px;">
+    <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">📍 Locations</h3>
+    <form method="POST" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:18px;flex-wrap:wrap;">
+      <input type="hidden" name="action" value="add_location"/>
+      <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+      <div class="form-group" style="flex:1;min-width:240px;margin-bottom:0;">
+        <label>Add Location</label>
+        <input type="text" name="name" placeholder="e.g. Tokyo, Japan" required maxlength="100"/>
+      </div>
+      <button type="submit" class="btn btn-success btn-sm" style="height:42px;">+ Add</button>
+    </form>
+    <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+      <thead>
+        <tr><th style="text-align:left;padding:10px 12px;background:#f9fafb;font-size:11.5px;color:#6b7280;text-transform:uppercase;">Name</th>
+            <th style="text-align:right;padding:10px 12px;background:#f9fafb;"></th></tr>
+      </thead>
+      <tbody>
+        <?php foreach (LOCATIONS as $loc): ?>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:10px 12px;"><?= htmlspecialchars($loc) ?></td>
+            <td style="padding:10px 12px;text-align:right;white-space:nowrap;">
+              <button type="button" class="btn btn-outline btn-sm" onclick='openLocEdit(<?= htmlspecialchars(json_encode($loc), ENT_QUOTES) ?>)'>Edit</button>
+              <form method="POST" style="display:inline;" onsubmit="return confirm('Delete location \"<?= htmlspecialchars($loc, ENT_QUOTES) ?>\"? Blocked if any records, users, or enterprises reference it.');">
+                <input type="hidden" name="action" value="delete_location"/>
+                <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+                <input type="hidden" name="name" value="<?= htmlspecialchars($loc) ?>"/>
+                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Enterprises -->
+  <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:20px;">
+    <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">🏢 Enterprises (Legal Entities)</h3>
+    <form method="POST" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:18px;flex-wrap:wrap;">
+      <input type="hidden" name="action" value="add_enterprise"/>
+      <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+      <div class="form-group" style="flex:2;min-width:260px;margin-bottom:0;">
+        <label>Enterprise Name</label>
+        <input type="text" name="name" placeholder="e.g. TechTiera Australia Pty Ltd" required maxlength="200"/>
+      </div>
+      <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0;">
+        <label>Location</label>
+        <select name="location" required>
+          <option value="">Select...</option>
+          <?php foreach (LOCATIONS as $loc): ?>
+            <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-success btn-sm" style="height:42px;">+ Add</button>
+    </form>
+    <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:10px 12px;background:#f9fafb;font-size:11.5px;color:#6b7280;text-transform:uppercase;">Name</th>
+          <th style="text-align:left;padding:10px 12px;background:#f9fafb;font-size:11.5px;color:#6b7280;text-transform:uppercase;">Location</th>
+          <th style="text-align:right;padding:10px 12px;background:#f9fafb;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach (ENTERPRISES as $e): ?>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:10px 12px;"><?= htmlspecialchars($e['name']) ?></td>
+            <td style="padding:10px 12px;"><span class="loc-pill"><?= htmlspecialchars($e['location']) ?></span></td>
+            <td style="padding:10px 12px;text-align:right;white-space:nowrap;">
+              <button type="button" class="btn btn-outline btn-sm" onclick='openEntEdit(<?= htmlspecialchars(json_encode($e), ENT_QUOTES) ?>)'>Edit</button>
+              <form method="POST" style="display:inline;" onsubmit="return confirm('Delete enterprise? Blocked if any record or user references it.');">
+                <input type="hidden" name="action" value="delete_enterprise"/>
+                <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+                <input type="hidden" name="id" value="<?= htmlspecialchars($e['id']) ?>"/>
+                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Users -->
+  <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:24px;">
+    <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">👤 Users</h3>
+    <form method="POST" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end;margin-bottom:18px;">
+      <input type="hidden" name="action" value="add_user"/>
+      <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Username</label>
+        <input type="text" name="username" placeholder="e.g. dubai_admin" required pattern="[a-z0-9_-]{3,32}" title="3–32 chars, lowercase letters, digits, _ or -"/>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Password</label>
+        <input type="password" name="password" placeholder="min 8 chars" required minlength="8" maxlength="200" autocomplete="new-password"/>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Role</label>
+        <select name="role" id="newUserRole" onchange="newUserRoleChanged()">
+          <option value="location">Location User</option>
+          <option value="admin">Admin (full access)</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:0;" id="newUserLocWrap">
+        <label>Location</label>
+        <select name="location" id="newUserLoc" onchange="newUserLocChanged()">
+          <option value="">Select...</option>
+          <?php foreach (LOCATIONS as $loc): ?>
+            <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:0;" id="newUserEntWrap">
+        <label>Enterprise (optional)</label>
+        <select name="enterprise" id="newUserEnt">
+          <option value="">All enterprises at location</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-success btn-sm" style="height:42px;">+ Add User</button>
+    </form>
+    <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:10px 12px;background:#f9fafb;font-size:11.5px;color:#6b7280;text-transform:uppercase;">Username</th>
+          <th style="text-align:left;padding:10px 12px;background:#f9fafb;font-size:11.5px;color:#6b7280;text-transform:uppercase;">Role</th>
+          <th style="text-align:left;padding:10px 12px;background:#f9fafb;font-size:11.5px;color:#6b7280;text-transform:uppercase;">Location</th>
+          <th style="text-align:left;padding:10px 12px;background:#f9fafb;font-size:11.5px;color:#6b7280;text-transform:uppercase;">Enterprise</th>
+          <th style="text-align:right;padding:10px 12px;background:#f9fafb;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach (USERS as $un => $u): ?>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:10px 12px;font-family:'Courier New',monospace;font-size:12.5px;"><?= htmlspecialchars($un) ?></td>
+            <td style="padding:10px 12px;">
+              <?php if (($u['role'] ?? '') === 'admin'): ?>
+                <span class="audit-badge audit-edit">Admin</span>
+              <?php else: ?>
+                <span class="audit-badge audit-login">Location</span>
+              <?php endif; ?>
+            </td>
+            <td style="padding:10px 12px;"><?= htmlspecialchars($u['location'] ?? '') ?: '—' ?></td>
+            <td style="padding:10px 12px;font-size:12.5px;color:#374151;"><?= htmlspecialchars($u['enterprise'] ?? '') ?: '<span style="color:#9ca3af;">All</span>' ?></td>
+            <td style="padding:10px 12px;text-align:right;white-space:nowrap;">
+              <button type="button" class="btn btn-outline btn-sm" onclick='openUserEdit(<?= htmlspecialchars(json_encode(['username'=>$un] + $u + ['password'=>'']), ENT_QUOTES) ?>)'>Edit</button>
+              <?php if ($un !== $username): ?>
+                <form method="POST" style="display:inline;" onsubmit="return confirm('Delete user <?= htmlspecialchars($un, ENT_QUOTES) ?>?');">
+                  <input type="hidden" name="action" value="delete_user"/>
+                  <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+                  <input type="hidden" name="username" value="<?= htmlspecialchars($un) ?>"/>
+                  <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                </form>
+              <?php endif; ?>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Location Edit Modal -->
+  <div class="modal-overlay" id="locEditModal" style="display:none;">
+    <div class="modal">
+      <div class="modal-head"><h3>Edit Location</h3><button class="modal-close" onclick="document.getElementById('locEditModal').style.display='none'">×</button></div>
+      <form method="POST">
+        <input type="hidden" name="action" value="edit_location"/>
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+        <input type="hidden" name="old_name" id="locEditOld"/>
+        <div class="modal-body">
+          <div class="form-group"><label>Current Name</label><input type="text" id="locEditCurrent" disabled style="background:#f9fafb;color:#6b7280;"/></div>
+          <div class="form-group"><label>New Name</label><input type="text" name="new_name" id="locEditNew" required maxlength="100"/></div>
+          <p style="font-size:12px;color:#6b7280;">Renaming updates all records, enterprises, and users tied to this location.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('locEditModal').style.display='none'">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Enterprise Edit Modal -->
+  <div class="modal-overlay" id="entEditModal" style="display:none;">
+    <div class="modal">
+      <div class="modal-head"><h3>Edit Enterprise</h3><button class="modal-close" onclick="document.getElementById('entEditModal').style.display='none'">×</button></div>
+      <form method="POST">
+        <input type="hidden" name="action" value="edit_enterprise"/>
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+        <input type="hidden" name="id" id="entEditId"/>
+        <div class="modal-body">
+          <div class="form-group"><label>Name</label><input type="text" name="name" id="entEditName" required maxlength="200"/></div>
+          <div class="form-group"><label>Location</label>
+            <select name="location" id="entEditLoc">
+              <?php foreach (LOCATIONS as $loc): ?>
+                <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <p style="font-size:12px;color:#6b7280;">Renaming updates all existing records that reference this enterprise.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('entEditModal').style.display='none'">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- User Edit Modal -->
+  <div class="modal-overlay" id="userEditModal" style="display:none;">
+    <div class="modal">
+      <div class="modal-head"><h3>Edit User</h3><button class="modal-close" onclick="document.getElementById('userEditModal').style.display='none'">×</button></div>
+      <form method="POST">
+        <input type="hidden" name="action" value="edit_user"/>
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
+        <div class="modal-body">
+          <div class="form-group"><label>Username</label><input type="text" name="username" id="userEditUn" required readonly style="background:#f3f4f6;cursor:not-allowed;"/></div>
+          <div class="form-row">
+            <div class="form-group"><label>Role</label>
+              <select name="role" id="userEditRole" onchange="userEditRoleChanged()">
+                <option value="location">Location User</option>
+                <option value="admin">Admin (full access)</option>
+              </select>
+            </div>
+            <div class="form-group"><label>New Password (blank = unchanged)</label>
+              <input type="password" name="password" id="userEditPw" placeholder="leave blank to keep" minlength="8" maxlength="200" autocomplete="new-password"/>
+            </div>
+          </div>
+          <div class="form-row" id="userEditScopeWrap">
+            <div class="form-group"><label>Location</label>
+              <select name="location" id="userEditLoc" onchange="userEditLocChanged()">
+                <option value="">Select...</option>
+                <?php foreach (LOCATIONS as $loc): ?>
+                  <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div class="form-group"><label>Enterprise (optional)</label>
+              <select name="enterprise" id="userEditEnt">
+                <option value="">All enterprises at location</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('userEditModal').style.display='none'">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Reuse TT_ENTERPRISES if declared, else declare here
+    if (typeof TT_ENTERPRISES === 'undefined') {
+      window.TT_ENTERPRISES = <?= json_encode(array_values(ENTERPRISES), JSON_UNESCAPED_UNICODE) ?>;
+    }
+    function fillEntSelect(selectId, location, currentValue) {
+      const sel = document.getElementById(selectId);
+      if (!sel) return;
+      sel.innerHTML = '<option value="">All enterprises at location</option>';
+      TT_ENTERPRISES.filter(e => !location || e.location === location).forEach(e => {
+        const o = document.createElement('option');
+        o.value = e.name; o.textContent = e.name;
+        if (e.name === currentValue) o.selected = true;
+        sel.appendChild(o);
+      });
+    }
+    function newUserRoleChanged() {
+      const role = document.getElementById('newUserRole').value;
+      const show = role === 'location';
+      document.getElementById('newUserLocWrap').style.display = show ? '' : 'none';
+      document.getElementById('newUserEntWrap').style.display = show ? '' : 'none';
+    }
+    function newUserLocChanged() {
+      fillEntSelect('newUserEnt', document.getElementById('newUserLoc').value, '');
+    }
+    function openLocEdit(name) {
+      document.getElementById('locEditOld').value = name;
+      document.getElementById('locEditCurrent').value = name;
+      document.getElementById('locEditNew').value = name;
+      document.getElementById('locEditModal').style.display = 'flex';
+    }
+    function openEntEdit(e) {
+      document.getElementById('entEditId').value   = e.id;
+      document.getElementById('entEditName').value = e.name;
+      document.getElementById('entEditLoc').value  = e.location;
+      document.getElementById('entEditModal').style.display = 'flex';
+    }
+    function openUserEdit(u) {
+      document.getElementById('userEditUn').value   = u.username;
+      document.getElementById('userEditRole').value = u.role || 'location';
+      document.getElementById('userEditLoc').value  = u.location || '';
+      document.getElementById('userEditPw').value   = '';
+      fillEntSelect('userEditEnt', u.location || '', u.enterprise || '');
+      userEditRoleChanged();
+      document.getElementById('userEditModal').style.display = 'flex';
+    }
+    function userEditRoleChanged() {
+      const role = document.getElementById('userEditRole').value;
+      document.getElementById('userEditScopeWrap').style.display = role === 'location' ? '' : 'none';
+    }
+    function userEditLocChanged() {
+      fillEntSelect('userEditEnt', document.getElementById('userEditLoc').value, '');
+    }
+    ['locEditModal','entEditModal','userEditModal'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', function(e){ if (e.target === this) this.style.display = 'none'; });
+    });
+    newUserRoleChanged();
+  </script>
+
+  <?php elseif ($adminPage === 'audit' && $isAdmin): ?>
+  <!-- ── AUDIT LOG PAGE ────────────────────────────────────────────────────── -->
+  <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:24px;">
+    <h2 style="font-size:18px;font-weight:600;margin-bottom:6px;">Audit Log</h2>
+    <p style="color:#6b7280;font-size:13px;margin-bottom:0;">Most recent 50 admin actions. Stored in <code>audit.json</code>, capped at 500 entries.</p>
+  </div>
+  <?php
+    $auditLog = loadAudit();
+    $auditShow = array_slice($auditLog, 0, 50);
+  ?>
+  <div class="audit-section">
+    <?php if (empty($auditShow)): ?>
+      <div class="audit-empty">No audit entries yet. Actions (add, edit, delete, upload) will appear here.</div>
+    <?php else: ?>
+      <div style="overflow-x:auto;">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>Date / Time</th>
+              <th>User</th>
+              <th>Action</th>
+              <th>Reference</th>
+              <th>Location</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($auditShow as $entry): ?>
+              <?php
+                $act   = $entry['action'] ?? '';
+                $badge = match($act) {
+                  'add'    => 'audit-add',
+                  'edit'   => 'audit-edit',
+                  'delete' => 'audit-delete',
+                  'upload' => 'audit-upload',
+                  default  => 'audit-login',
+                };
+              ?>
+              <tr>
+                <td style="white-space:nowrap;color:#6b7280;"><?= htmlspecialchars($entry['ts'] ?? '—') ?></td>
+                <td><strong><?= htmlspecialchars($entry['user'] ?? '—') ?></strong></td>
+                <td><span class="audit-badge <?= $badge ?>"><?= htmlspecialchars(ucfirst($act)) ?></span></td>
+                <td><span style="font-family:'Courier New',monospace;font-size:12px;"><?= htmlspecialchars($entry['ref'] ?? '—') ?></span></td>
+                <td><?= htmlspecialchars($entry['location'] ?? '—') ?></td>
+                <td style="color:#6b7280;"><?= htmlspecialchars($entry['detail'] ?? '') ?></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
+  </div>
+
+  <?php else: ?>
   <!-- Stats -->
   <div class="stats">
     <?php
@@ -763,54 +1607,6 @@ function pageUrl(array $extra = []): string {
     <?php endif; ?>
   </div>
 
-  <!-- Audit Log — admin only -->
-  <?php
-    $auditLog = loadAudit();
-    $auditShow = array_slice($auditLog, 0, 50);
-  ?>
-  <div class="audit-section">
-    <h3>🔍 Audit Log <span style="font-size:11.5px;font-weight:400;color:#9ca3af;margin-left:8px;">Last 50 actions</span></h3>
-    <?php if (empty($auditShow)): ?>
-      <div class="audit-empty">No audit entries yet. Actions (add, edit, delete, upload) will appear here.</div>
-    <?php else: ?>
-      <div style="overflow-x:auto;">
-        <table class="audit-table">
-          <thead>
-            <tr>
-              <th>Date / Time</th>
-              <th>User</th>
-              <th>Action</th>
-              <th>Reference</th>
-              <th>Location</th>
-              <th>Detail</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach ($auditShow as $entry): ?>
-              <?php
-                $act   = $entry['action'] ?? '';
-                $badge = match($act) {
-                  'add'    => 'audit-add',
-                  'edit'   => 'audit-edit',
-                  'delete' => 'audit-delete',
-                  'upload' => 'audit-upload',
-                  default  => 'audit-login',
-                };
-              ?>
-              <tr>
-                <td style="white-space:nowrap;color:#6b7280;"><?= htmlspecialchars($entry['ts'] ?? '—') ?></td>
-                <td><strong><?= htmlspecialchars($entry['user'] ?? '—') ?></strong></td>
-                <td><span class="audit-badge <?= $badge ?>"><?= htmlspecialchars(ucfirst($act)) ?></span></td>
-                <td><span style="font-family:'Courier New',monospace;font-size:12px;"><?= htmlspecialchars($entry['ref'] ?? '—') ?></span></td>
-                <td><?= htmlspecialchars($entry['location'] ?? '—') ?></td>
-                <td style="color:#6b7280;"><?= htmlspecialchars($entry['detail'] ?? '') ?></td>
-              </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
-      </div>
-    <?php endif; ?>
-  </div>
   <?php endif; ?>
 
   <!-- Upload Section -->
@@ -849,12 +1645,30 @@ function pageUrl(array $extra = []): string {
     <?php else: ?>
     <input type="hidden" name="loc" value=""/>
     <?php endif; ?>
+    <?php
+      // Enterprise dropdown: admin sees all; location user sees only own-location enterprises
+      $entOptions = $isAdmin
+          ? ENTERPRISES
+          : enterprisesForLocation($myLocation);
+      // Enterprise-scoped user: filter is locked to their enterprise (hide dropdown)
+      $entLocked = !$isAdmin && $myEnterprise !== '';
+    ?>
+    <?php if (!$entLocked && !empty($entOptions)): ?>
+    <select name="ent" onchange="this.form.submit()" style="width:200px;padding:8px 10px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:13px;background:white;cursor:pointer;">
+      <option value="">All Enterprises</option>
+      <?php foreach ($entOptions as $e): ?>
+      <option value="<?= htmlspecialchars($e['name']) ?>" <?= $filterEnterprise===$e['name']?'selected':'' ?>><?= htmlspecialchars($e['name']) ?></option>
+      <?php endforeach; ?>
+    </select>
+    <?php else: ?>
+    <input type="hidden" name="ent" value="<?= htmlspecialchars($entLocked ? $myEnterprise : '') ?>"/>
+    <?php endif; ?>
     <select name="pp" onchange="this.form.submit()" style="width:100px;padding:8px 10px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:13px;background:white;cursor:pointer;">
       <option value="25"  <?= $perPage===25 ?'selected':'' ?>>25 / page</option>
       <option value="50"  <?= $perPage===50 ?'selected':'' ?>>50 / page</option>
       <option value="100" <?= $perPage===100?'selected':'' ?>>100 / page</option>
     </select>
-    <?php if ($search || $filterType || $filterLocation): ?>
+    <?php if ($search || $filterType || $filterLocation || $filterEnterprise): ?>
       <a href="<?= ADMIN_URL ?>" class="btn btn-outline btn-sm">✕ Clear</a>
     <?php endif; ?>
     <a href="<?= htmlspecialchars(pageUrl(['download' => 'export'])) ?>" class="btn btn-outline btn-sm" style="white-space:nowrap;">⬇ Export CSV</a>
@@ -882,6 +1696,7 @@ function pageUrl(array $extra = []): string {
             <th>Name</th>
             <th>Role</th>
             <th>Location</th>
+            <th>Enterprise</th>
             <th>DOB</th>
             <th>Start Date</th>
             <th>End Date</th>
@@ -892,7 +1707,7 @@ function pageUrl(array $extra = []): string {
         </thead>
         <tbody>
         <?php if (empty($paginated)): ?>
-          <tr><td colspan="10" class="empty-state"><?= $total === 0 ? 'No records yet. Upload a CSV or add manually.' : 'No records match your search.' ?></td></tr>
+          <tr><td colspan="11" class="empty-state"><?= $total === 0 ? 'No records yet. Upload a CSV or add manually.' : 'No records match your search.' ?></td></tr>
         <?php else: ?>
           <?php foreach ($paginated as $r): ?>
             <?php
@@ -905,6 +1720,7 @@ function pageUrl(array $extra = []): string {
               <td><?= htmlspecialchars($r['legalName'] ?? '') ?></td>
               <td style="color:#6b7280;"><?= htmlspecialchars($r['role'] ?? '') ?: '—' ?></td>
               <td><?= $r['location'] ? '<span class="loc-pill">' . htmlspecialchars($r['location']) . '</span>' : '<span style="color:#9ca3af;">—</span>' ?></td>
+              <td style="font-size:12.5px;color:#374151;"><?= htmlspecialchars($r['enterprise'] ?? '') ?: '<span style="color:#9ca3af;">—</span>' ?></td>
               <td><?= htmlspecialchars(displayDate($r['dob'] ?? '')) ?></td>
               <td><?= htmlspecialchars(displayDate($r['startDate'] ?? '')) ?></td>
               <td><?= htmlspecialchars(displayDate($r['endDate'] ?? '')) ?></td>
@@ -966,6 +1782,8 @@ function pageUrl(array $extra = []): string {
   </div>
   <?php endif; ?>
 
+  <?php endif; // /settings-vs-dashboard ?>
+
 </div><!-- /.wrap -->
 
 <!-- ADD MODAL -->
@@ -981,19 +1799,37 @@ function pageUrl(array $extra = []): string {
           <div class="form-group"><label>Legal Name</label><input type="text" name="legalName" placeholder="Full legal name" required/></div>
           <div class="form-group"><label>Role / Designation</label><input type="text" name="role" placeholder="e.g. Software Engineer"/></div>
         </div>
-        <div class="form-group">
-          <label>Location</label>
-          <?php if ($isAdmin): ?>
-            <select name="location">
-              <option value="">Select location...</option>
-              <?php foreach (LOCATIONS as $loc): ?>
-                <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
-              <?php endforeach; ?>
-            </select>
-          <?php else: ?>
-            <input type="hidden" name="location" value="<?= htmlspecialchars($myLocation) ?>"/>
-            <div class="location-display"><?= htmlspecialchars($myLocation) ?></div>
-          <?php endif; ?>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Location</label>
+            <?php if ($isAdmin): ?>
+              <select name="location" id="addLocation" onchange="updateAddEnterprises()">
+                <option value="">Select location...</option>
+                <?php foreach (LOCATIONS as $loc): ?>
+                  <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
+                <?php endforeach; ?>
+              </select>
+            <?php else: ?>
+              <input type="hidden" name="location" value="<?= htmlspecialchars($myLocation) ?>"/>
+              <div class="location-display location-fixed"><?= htmlspecialchars($myLocation) ?></div>
+            <?php endif; ?>
+          </div>
+          <div class="form-group">
+            <label>Enterprise</label>
+            <?php if (!$isAdmin && $myEnterprise !== ''): ?>
+              <input type="hidden" name="enterprise" value="<?= htmlspecialchars($myEnterprise) ?>"/>
+              <div class="location-fixed"><?= htmlspecialchars($myEnterprise) ?></div>
+            <?php else: ?>
+              <select name="enterprise" id="addEnterprise">
+                <option value="">Select enterprise...</option>
+                <?php
+                  $entSeed = $isAdmin ? ENTERPRISES : enterprisesForLocation($myLocation);
+                  foreach ($entSeed as $e): ?>
+                  <option value="<?= htmlspecialchars($e['name']) ?>" data-loc="<?= htmlspecialchars($e['location']) ?>"><?= htmlspecialchars($e['name']) ?></option>
+                <?php endforeach; ?>
+              </select>
+            <?php endif; ?>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Date of Birth (DD-MM-YYYY)</label><input type="text" name="dob" placeholder="DD-MM-YYYY" maxlength="10"/></div>
@@ -1032,19 +1868,37 @@ function pageUrl(array $extra = []): string {
           <div class="form-group"><label>Legal Name</label><input type="text" name="legalName" id="editName" required/></div>
           <div class="form-group"><label>Role / Designation</label><input type="text" name="role" id="editRole"/></div>
         </div>
-        <div class="form-group">
-          <label>Location</label>
-          <?php if ($isAdmin): ?>
-            <select name="location" id="editLocation">
-              <option value="">Select location...</option>
-              <?php foreach (LOCATIONS as $loc): ?>
-                <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
-              <?php endforeach; ?>
-            </select>
-          <?php else: ?>
-            <input type="hidden" name="location" value="<?= htmlspecialchars($myLocation) ?>"/>
-            <div class="location-display"><?= htmlspecialchars($myLocation) ?></div>
-          <?php endif; ?>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Location</label>
+            <?php if ($isAdmin): ?>
+              <select name="location" id="editLocation" onchange="updateEditEnterprises()">
+                <option value="">Select location...</option>
+                <?php foreach (LOCATIONS as $loc): ?>
+                  <option value="<?= htmlspecialchars($loc) ?>"><?= htmlspecialchars($loc) ?></option>
+                <?php endforeach; ?>
+              </select>
+            <?php else: ?>
+              <input type="hidden" name="location" value="<?= htmlspecialchars($myLocation) ?>"/>
+              <div class="location-display location-fixed"><?= htmlspecialchars($myLocation) ?></div>
+            <?php endif; ?>
+          </div>
+          <div class="form-group">
+            <label>Enterprise</label>
+            <?php if (!$isAdmin && $myEnterprise !== ''): ?>
+              <input type="hidden" name="enterprise" value="<?= htmlspecialchars($myEnterprise) ?>"/>
+              <div class="location-fixed"><?= htmlspecialchars($myEnterprise) ?></div>
+            <?php else: ?>
+              <select name="enterprise" id="editEnterprise">
+                <option value="">Select enterprise...</option>
+                <?php
+                  $entSeed2 = $isAdmin ? ENTERPRISES : enterprisesForLocation($myLocation);
+                  foreach ($entSeed2 as $e): ?>
+                  <option value="<?= htmlspecialchars($e['name']) ?>" data-loc="<?= htmlspecialchars($e['location']) ?>"><?= htmlspecialchars($e['name']) ?></option>
+                <?php endforeach; ?>
+              </select>
+            <?php endif; ?>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Date of Birth (DD-MM-YYYY)</label><input type="text" name="dob" id="editDob" placeholder="DD-MM-YYYY" maxlength="10"/></div>
@@ -1084,6 +1938,40 @@ function pageUrl(array $extra = []): string {
     return m ? `${m[3]}-${m[2]}-${m[1]}` : d;
   }
 
+  // Enterprise list keyed by location (admin only — server filters for location users)
+  if (typeof window.TT_ENTERPRISES === 'undefined') {
+    window.TT_ENTERPRISES = <?= json_encode(array_values(ENTERPRISES), JSON_UNESCAPED_UNICODE) ?>;
+  }
+
+  function rebuildEnterpriseSelect(selectId, location, currentValue) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    const prev = currentValue || sel.value;
+    sel.innerHTML = '<option value="">Select enterprise...</option>';
+    TT_ENTERPRISES
+      .filter(e => !location || e.location === location)
+      .forEach(e => {
+        const o = document.createElement('option');
+        o.value = e.name;
+        o.textContent = e.name;
+        o.dataset.loc = e.location;
+        if (e.name === prev) o.selected = true;
+        sel.appendChild(o);
+      });
+  }
+
+  function updateAddEnterprises() {
+    const loc = document.getElementById('addLocation');
+    if (!loc) return;
+    rebuildEnterpriseSelect('addEnterprise', loc.value, '');
+  }
+
+  function updateEditEnterprises(keepValue) {
+    const loc = document.getElementById('editLocation');
+    if (!loc) return;
+    rebuildEnterpriseSelect('editEnterprise', loc.value, keepValue || '');
+  }
+
   function openEdit(r) {
     document.getElementById('editId').value    = r.id        || '';
     document.getElementById('editRef').value   = r.reference || '';
@@ -1096,6 +1984,10 @@ function pageUrl(array $extra = []): string {
     if (sep) sep.value = r.separationType || 'voluntary';
     const loc = document.getElementById('editLocation');
     if (loc) loc.value = r.location || '';
+    // Rebuild enterprise list for the chosen location, preselecting current value
+    updateEditEnterprises(r.enterprise || '');
+    const ent = document.getElementById('editEnterprise');
+    if (ent) ent.value = r.enterprise || '';
     document.getElementById('editModal').style.display = 'flex';
   }
 </script>

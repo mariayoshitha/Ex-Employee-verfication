@@ -3,7 +3,10 @@ tt-credentials.php
 
 # Real employee data / PII — keep out of version control
 data.json
+data.json.bak
 audit.json
+audit-*.json
+tt-config.json
 
 # Server + tooling artifacts
 error_log
