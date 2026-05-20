@@ -30,6 +30,12 @@ RewriteRule ^ - [F,L]
 RewriteCond %{THE_REQUEST} \s/tt-config\.json[\s?] [NC]
 RewriteRule ^ - [F,L]
 
+RewriteCond %{THE_REQUEST} \s/tt-config\.json\.lock[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+RewriteCond %{THE_REQUEST} \s/audit-\d{4}-\d{2}\.json[\s?] [NC]
+RewriteRule ^ - [F,L]
+
 # Clean URL routing
 RewriteRule ^admin/?$   admin.php   [L]
 RewriteRule ^api/?$     api.php     [QSA,L]
