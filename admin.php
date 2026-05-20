@@ -10,8 +10,9 @@ ini_set('session.cookie_samesite', 'Strict');
 // Production .htaccess forces HTTPS, so $_SERVER['HTTPS'] is always set there.
 // On the built-in PHP dev server (plain HTTP), gate this off so the session
 // cookie isn't dropped and login can be tested locally.
+// Only trust direct request signals — never proxy-forwarded headers, which an
+// attacker can forge through a misconfigured proxy.
 $__isHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
-          || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
           || (($_SERVER['SERVER_PORT'] ?? '') === '443');
 ini_set('session.cookie_secure', $__isHttps ? 1 : 0);
 session_start();
@@ -379,6 +380,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── Login (IP-based lockout — session-clearing cannot bypass) ────────────────
     if ($action === 'login') {
+        // CSRF check: blocks login-CSRF (attacker logging victim into attacker's account).
+        // Token sits in the session from the initial GET; SameSite=Strict cookie already
+        // mitigates most cross-origin POSTs but explicit csrf is standard practice.
+        if (!isset($_POST['csrf']) || empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$_POST['csrf'])) {
+            $error = 'Security token expired. Please refresh the page and try again.';
+            goto done;
+        }
         $loginIp  = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
         $rlFile   = sys_get_temp_dir() . '/tt_adm_' . md5($loginIp) . '.json';
         $rl       = @json_decode(@file_get_contents($rlFile), true) ?: ['attempts' => 0, 'lockout_until' => 0];
@@ -633,8 +641,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'add_enterprise','edit_enterprise','delete_enterprise',
         'add_user','edit_user','delete_user',
     ];
+    $__cfgLock = null;
     if (in_array($action, $settingsActions, true)) {
         if (!$isAdminAction) { http_response_code(403); die('Forbidden.'); }
+        // Acquire exclusive advisory lock around the full read-modify-write so
+        // two concurrent Settings POSTs cannot clobber each other. flock blocks
+        // until the prior writer releases, then we read a coherent snapshot.
+        $__lockPath = configFile() . '.lock';
+        $__cfgLock = @fopen($__lockPath, 'c');
+        if (!$__cfgLock || !@flock($__cfgLock, LOCK_EX)) {
+            if ($__cfgLock) { fclose($__cfgLock); $__cfgLock = null; }
+            $error = 'Settings busy — try again in a moment.';
+            goto done;
+        }
         $cfg = loadConfig();
 
         if ($action === 'add_location') {
@@ -882,6 +901,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     done:
+    if (!empty($__cfgLock)) {
+        @flock($__cfgLock, LOCK_UN);
+        fclose($__cfgLock);
+        $__cfgLock = null;
+    }
 }
 
 // ── View variables ────────────────────────────────────────────────────────────
@@ -1151,6 +1175,7 @@ function pageUrl(array $extra = []): string {
       <?php endif; ?>
       <form method="POST">
         <input type="hidden" name="action" value="login"/>
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>"/>
         <div class="form-group">
           <label for="un">Username</label>
           <input type="text" id="un" name="username" placeholder="e.g. admin, chicago" autocomplete="username" autofocus required/>
