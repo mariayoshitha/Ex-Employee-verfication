@@ -215,13 +215,57 @@
     .employee-name {
       font-size: 20px;
       font-weight: 700;
-      color: #111827;
+      color: var(--color-text);
+      line-height: 1.3;
     }
 
     .name-block {
       margin-bottom: 18px;
-      padding-bottom: 14px;
-      border-bottom: 1px solid #f3f4f6;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--color-border-soft);
+    }
+
+    .name-enterprise {
+      margin-top: 8px;
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--color-brand-blue);
+      line-height: 1.4;
+    }
+
+    .header-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .header-meta-item {
+      background: var(--color-surface);
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+
+    .header-meta-label {
+      display: block;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--color-text-subtle);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 4px;
+    }
+
+    .header-meta-value {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-text);
+      line-height: 1.35;
+    }
+
+    @media (max-width: 520px) {
+      .header-meta { grid-template-columns: 1fr; gap: 10px; }
     }
 
     .fields-grid {
@@ -488,11 +532,12 @@
               <div class="result-body">
                 <div class="name-block">
                   <div class="employee-name">${esc(record.legalName)}</div>
-                  ${record.enterprise ? `<div style="margin-top:6px;font-size:13.5px;color:var(--color-brand-blue);font-weight:600;">${esc(record.enterprise)}</div>` : ''}
-                  <div style="display:flex;gap:24px;margin-top:10px;flex-wrap:wrap;">
-                    ${record.location ? `<div style="font-size:13px;color:var(--color-text-muted);"><span style="font-weight:600;color:var(--color-text-subtle);text-transform:uppercase;font-size:11px;letter-spacing:0.4px;">Location</span><br><strong style="font-size:14px;color:var(--color-text);">${esc(record.location)}</strong></div>` : ''}
-                    ${record.role ? `<div style="font-size:13px;color:var(--color-text-muted);"><span style="font-weight:600;color:var(--color-text-subtle);text-transform:uppercase;font-size:11px;letter-spacing:0.4px;">Role</span><br><strong style="font-size:14px;color:var(--color-text);">${esc(record.role)}</strong></div>` : ''}
-                  </div>
+                  ${record.enterprise ? `<div class="name-enterprise">${esc(record.enterprise)}</div>` : ''}
+                  ${(record.location || record.role) ? `
+                  <div class="header-meta">
+                    ${record.location ? `<div class="header-meta-item"><span class="header-meta-label">Location</span><span class="header-meta-value">${esc(record.location)}</span></div>` : ''}
+                    ${record.role ? `<div class="header-meta-item"><span class="header-meta-label">Role</span><span class="header-meta-value">${esc(record.role)}</span></div>` : ''}
+                  </div>` : ''}
                 </div>
                 <div class="fields-grid">
                   <div class="field">
