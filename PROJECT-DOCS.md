@@ -3,7 +3,11 @@
 
 **URL:** https://verify.techteira.com  
 **Admin Panel:** https://verify.techteira.com/admin  
-**Last Updated:** 2025-05-16
+**Last Updated:** 2026-05-22
+
+> **Recent feature docs (read these in addition to this file):**
+> - [ENTERPRISE-FEATURE.md](ENTERPRISE-FEATURE.md) — enterprise / legal-entity field, Settings UI, scoped users, `tt-config.json`.
+> - [XLSX-UPLOAD-FEATURE.md](XLSX-UPLOAD-FEATURE.md) — xlsx upload + dropdown template, CSV BOM fix, native date pickers, Excel date serial handling.
 
 ---
 
@@ -38,12 +42,17 @@ Internal tool for TechTiera HR and recruiters to:
 | `index.html` | Public employee verification portal |
 | `admin.php` | Full admin panel (all logic + UI) |
 | `api.php` | Public search API (rate-limited, 20/min per IP) |
-| `data.json` | Employee records database |
-| `audit.json` | Audit log database |
-| `tt-credentials.php` | User credentials (bcrypt hashed) — move above public_html |
+| `router.php` | Dev-only router for `php -S` (maps `/admin` → `admin.php`, mirrors `.htaccess` clean URLs + blocks). Not used in production. |
+| `data.json` | Employee records database (gitignored) |
+| `audit.json` | Audit log database (gitignored) |
+| `tt-config.json` | Locations + enterprises + users (lives outside public_html; gitignored). See ENTERPRISE-FEATURE.md. |
+| `tt-credentials.php` | Seed-source for first-bootstrap user credentials (bcrypt) — move above public_html, gitignored |
 | `manual.html` | User manual (Admin + Location User guide) |
 | `.htaccess` | Routing, security headers, file access blocking |
 | `logo.svg` | TechTiera logo (base64-embedded in HTML/PHP) |
+| `PROJECT-DOCS.md` | This file. |
+| `ENTERPRISE-FEATURE.md` | Enterprise field rollout notes. |
+| `XLSX-UPLOAD-FEATURE.md` | XLSX upload + template + BOM fix + date input notes. |
 
 ---
 
@@ -100,13 +109,15 @@ Internal tool for TechTiera HR and recruiters to:
 - [x] Logout with CSRF check
 
 ### Admin Panel — Records
-- [x] Add record (modal form)
-- [x] Edit record (inline modal, pre-filled)
+- [x] Add record (modal form, native date pickers for DOB/Start/End)
+- [x] Edit record (inline modal, pre-filled, native date pickers)
 - [x] Delete record (confirmation prompt)
-- [x] CSV bulk upload (merge/upsert by Employee ID)
+- [x] CSV bulk upload (merge/upsert by Employee ID, UTF-8 BOM tolerated)
 - [x] CSV template download (admin gets all-location template, location user gets scoped template)
+- [x] **XLSX bulk upload** (same row-processing as CSV; accepts shared-string and inline-string cells; Excel date serials auto-converted)
+- [x] **XLSX template download** with in-cell dropdowns for Location, Enterprise, Separation Type (hidden Lists sheet backs the validations)
 - [x] Export filtered CSV (respects current search/filter/location scope)
-- [x] Duplicate Employee ID detection on upload (skips, does not overwrite via CSV)
+- [x] Duplicate Employee ID on upload upserts by reference (case-insensitive) — see ENTERPRISE-FEATURE.md
 
 ### Admin Panel — Filters & Search
 - [x] Search box (matches Employee ID, name, role, location)
@@ -138,9 +149,10 @@ Internal tool for TechTiera HR and recruiters to:
 - [x] Audit entries: timestamp, username, action, Employee ID, location, detail
 - [x] Audit log capped at 500 entries (rolling)
 - [x] file_put_contents with LOCK_EX for safe concurrent writes
-- [x] Date normalization (accepts DD-MM-YYYY, YYYY-MM-DD, DD/MM/YYYY on input)
-- [x] Location fuzzy matching on CSV upload
-- [x] CSV injection prevention (sanitizeText prefix)
+- [x] Date normalization (accepts DD-MM-YYYY, YYYY-MM-DD, DD/MM/YYYY, YYYY/MM/DD, AND Excel date serials on input)
+- [x] Location fuzzy matching on CSV/XLSX upload
+- [x] CSV injection prevention (sanitizeText prefix on `=+-@\t\r`)
+- [x] XLSX upload hardening: LIBXML_NONET on simplexml, 25 MB uncompressed cap (zip-bomb guard), `[Content_Types].xml` + `xl/workbook.xml` marker check (rejects arbitrary zips)
 
 ### Security & Infrastructure
 - [x] HTTPS enforced via .htaccess (301 redirect)
@@ -194,6 +206,7 @@ Internal tool for TechTiera HR and recruiters to:
   "legalName":      "Aisha Patel",
   "role":           "Senior Analyst",
   "location":       "Hyderabad, India",
+  "enterprise":     "TechTiera Corporation India Pvt. Ltd.",
   "dob":            "1990-06-15",
   "startDate":      "2021-03-01",
   "endDate":        "2023-12-31",
@@ -216,6 +229,18 @@ Internal tool for TechTiera HR and recruiters to:
 ```
 
 ---
+
+## Local Development
+
+```powershell
+# From the project folder:
+php -S localhost:1000 router.php
+```
+
+- Visit http://localhost:1000/ for the public verification page, http://localhost:1000/admin for the admin panel.
+- `router.php` reproduces the production `.htaccess` clean-URL routing + sensitive-file blocks for the built-in PHP server.
+- First admin load auto-bootstraps `tt-config.json` from `tt-credentials.php`. After that, `tt-config.json` is authoritative.
+- Plaintext credentials are stored as bcrypt in `tt-credentials.php` — the original plaintext lives only in the historical `tt verification live.zip` (kept outside the repo). To set a new password: `php -r "echo password_hash('newpass', PASSWORD_BCRYPT);"` and paste the hash into `tt-config.json`.
 
 ## Deployment Checklist
 
