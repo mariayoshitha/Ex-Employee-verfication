@@ -279,7 +279,7 @@ function validateDate(string $d): string {
     return preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : '';
 }
 
-// Convert DD-MM-YYYY, DD/MM/YYYY, YYYY/MM/DD → YYYY-MM-DD
+// Convert DD-MM-YYYY, DD/MM/YYYY, YYYY/MM/DD, or Excel date serial → YYYY-MM-DD
 function normalizeDate(string $d): string {
     $d = trim($d);
     if (!$d) return '';
@@ -287,6 +287,14 @@ function normalizeDate(string $d): string {
         return sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]);
     if (preg_match('/^(\d{1,2})[-\/\.](\d{1,2})[-\/\.](\d{4})$/', $d, $m))
         return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+    // Excel date serial (xlsx may store user-typed dates as numbers).
+    // Range 25569..60000 ≈ 1970..2064; below 25569 is pre-1970 / unsafe.
+    if (preg_match('/^\d{1,5}(\.\d+)?$/', $d)) {
+        $n = (float)$d;
+        if ($n >= 25569 && $n <= 60000) {
+            return gmdate('Y-m-d', (int)(($n - 25569) * 86400));
+        }
+    }
     return $d;
 }
 
@@ -327,6 +335,192 @@ function cleanRow(array $colMap, array $row, string $location = '', string $ente
         'separationType' => $sep,
         'lastUpdated'    => nowStamp(),
     ];
+}
+
+// ── XLSX Helpers ──────────────────────────────────────────────────────────────
+function xlsxColLetter(int $i): string {
+    $s = ''; $i++;
+    while ($i > 0) { $r = ($i - 1) % 26; $s = chr(65 + $r) . $s; $i = intdiv($i - 1, 26); }
+    return $s;
+}
+function xlsxEsc(string $s): string {
+    return htmlspecialchars($s, ENT_QUOTES | ENT_XML1, 'UTF-8');
+}
+function xlsxColIndex(string $ref): int {
+    if (preg_match('/^([A-Z]+)/i', $ref, $m)) {
+        $L = strtoupper($m[1]); $n = 0;
+        for ($i = 0; $i < strlen($L); $i++) $n = $n * 26 + (ord($L[$i]) - 64);
+        return $n - 1;
+    }
+    return 0;
+}
+function xlsxBuildSheet(array $rows, array $validations): string {
+    $xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        . '<sheetData>';
+    foreach ($rows as $r => $cells) {
+        $rowNum = $r + 1;
+        $xml .= '<row r="' . $rowNum . '">';
+        foreach ($cells as $c => $cell) {
+            if ($cell === null) continue;
+            $ref = xlsxColLetter($c) . $rowNum;
+            [$type, $val] = $cell;
+            $xml .= '<c r="' . $ref . '" t="' . $type . '"><v>' . $val . '</v></c>';
+        }
+        $xml .= '</row>';
+    }
+    $xml .= '</sheetData>';
+    if ($validations) {
+        $xml .= '<dataValidations count="' . count($validations) . '">';
+        foreach ($validations as $v) {
+            $colL = xlsxColLetter($v['col']);
+            $range = $colL . $v['from'] . ':' . $colL . $v['to'];
+            $xml .= '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="' . $range . '">'
+                . '<formula1>' . xlsxEsc($v['list']) . '</formula1>'
+                . '</dataValidation>';
+        }
+        $xml .= '</dataValidations>';
+    }
+    $xml .= '</worksheet>';
+    return $xml;
+}
+function buildXlsxTemplate(array $headers, string $note, array $exampleRows, array $locations, array $enterprises, array $sepTypes, int $locCol, int $entCol, int $sepCol): string {
+    $strings = [];
+    $idx = function(string $s) use (&$strings): int {
+        $k = array_search($s, $strings, true);
+        if ($k !== false) return $k;
+        $strings[] = $s;
+        return count($strings) - 1;
+    };
+    $rows = [];
+    $rows[] = array_map(fn($h) => ['s', $idx($h)], $headers);
+    $noteRow = array_fill(0, count($headers), null);
+    $noteRow[0] = ['s', $idx($note)];
+    $rows[] = $noteRow;
+    foreach ($exampleRows as $r) {
+        $cells = [];
+        foreach ($r as $v) $cells[] = ($v === '' || $v === null) ? null : ['s', $idx((string)$v)];
+        while (count($cells) < count($headers)) $cells[] = null;
+        $rows[] = $cells;
+    }
+    $listRows = [];
+    $maxList = max(count($locations), count($enterprises), count($sepTypes));
+    for ($i = 0; $i < $maxList; $i++) {
+        $listRows[] = [
+            $i < count($locations)   ? ['s', $idx($locations[$i])]   : null,
+            $i < count($enterprises) ? ['s', $idx($enterprises[$i])] : null,
+            $i < count($sepTypes)    ? ['s', $idx($sepTypes[$i])]    : null,
+        ];
+    }
+    $endRow = 2 + count($exampleRows) + 500;
+    $vals = [];
+    if ($locCol >= 0 && $locations)   $vals[] = ['col' => $locCol, 'from' => 3, 'to' => $endRow, 'list' => 'Lists!$A$1:$A$' . count($locations)];
+    if ($entCol >= 0 && $enterprises) $vals[] = ['col' => $entCol, 'from' => 3, 'to' => $endRow, 'list' => 'Lists!$B$1:$B$' . count($enterprises)];
+    if ($sepCol >= 0 && $sepTypes)    $vals[] = ['col' => $sepCol, 'from' => 3, 'to' => $endRow, 'list' => 'Lists!$C$1:$C$' . count($sepTypes)];
+
+    $sheet1 = xlsxBuildSheet($rows, $vals);
+    $sheet2 = xlsxBuildSheet($listRows, []);
+    $ssXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="' . count($strings) . '" uniqueCount="' . count($strings) . '">';
+    foreach ($strings as $s) $ssXml .= '<si><t xml:space="preserve">' . xlsxEsc($s) . '</t></si>';
+    $ssXml .= '</sst>';
+    $workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        . '<sheets>'
+        . '<sheet name="Data" sheetId="1" r:id="rId1"/>'
+        . '<sheet name="Lists" sheetId="2" state="hidden" r:id="rId2"/>'
+        . '</sheets></workbook>';
+    $workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        . '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>'
+        . '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
+        . '</Relationships>';
+    $rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        . '</Relationships>';
+    $ct = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        . '<Default Extension="xml" ContentType="application/xml"/>'
+        . '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        . '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        . '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        . '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+        . '</Types>';
+
+    $tmp = tempnam(sys_get_temp_dir(), 'xlsx');
+    $zip = new ZipArchive;
+    $zip->open($tmp, ZipArchive::OVERWRITE);
+    $zip->addFromString('[Content_Types].xml', $ct);
+    $zip->addFromString('_rels/.rels', $rels);
+    $zip->addFromString('xl/workbook.xml', $workbook);
+    $zip->addFromString('xl/_rels/workbook.xml.rels', $workbookRels);
+    $zip->addFromString('xl/worksheets/sheet1.xml', $sheet1);
+    $zip->addFromString('xl/worksheets/sheet2.xml', $sheet2);
+    $zip->addFromString('xl/sharedStrings.xml', $ssXml);
+    $zip->close();
+    $bytes = file_get_contents($tmp);
+    @unlink($tmp);
+    return $bytes;
+}
+function parseXlsx(string $path): array {
+    if (!class_exists('ZipArchive')) return [];
+    $zip = new ZipArchive;
+    if ($zip->open($path) !== true) return [];
+    // Reject if missing xlsx markers (defends against any-zip-renamed-to-xlsx)
+    if ($zip->locateName('[Content_Types].xml') === false || $zip->locateName('xl/workbook.xml') === false) {
+        $zip->close(); return [];
+    }
+    // Zip-bomb guard: cap total uncompressed size at 25 MB
+    $totalUncompressed = 0;
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $s = $zip->statIndex($i);
+        if ($s && isset($s['size'])) $totalUncompressed += (int)$s['size'];
+        if ($totalUncompressed > 25 * 1024 * 1024) { $zip->close(); return []; }
+    }
+    $strings = [];
+    $ss = $zip->getFromName('xl/sharedStrings.xml');
+    if ($ss !== false) {
+        $prev = libxml_use_internal_errors(true);
+        $xml = simplexml_load_string($ss, 'SimpleXMLElement', LIBXML_NONET);
+        libxml_use_internal_errors($prev);
+        if ($xml) {
+            foreach ($xml->si as $si) {
+                $t = '';
+                if (isset($si->t)) $t = (string)$si->t;
+                if (isset($si->r)) foreach ($si->r as $rr) $t .= (string)$rr->t;
+                $strings[] = $t;
+            }
+        }
+    }
+    $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    if ($sheetXml === false) return [];
+    $prev = libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($sheetXml, 'SimpleXMLElement', LIBXML_NONET);
+    libxml_use_internal_errors($prev);
+    if (!$xml) return [];
+    $rows = [];
+    foreach ($xml->sheetData->row as $row) {
+        $cells = []; $max = -1;
+        foreach ($row->c as $c) {
+            $ref = (string)$c['r'];
+            $type = (string)$c['t'];
+            $col = xlsxColIndex($ref);
+            $val = isset($c->v) ? (string)$c->v : '';
+            if ($type === 's') $val = $strings[(int)$val] ?? '';
+            elseif ($type === 'inlineStr') $val = isset($c->is->t) ? (string)$c->is->t : '';
+            $cells[$col] = $val;
+            if ($col > $max) $max = $col;
+        }
+        if ($max < 0) { $rows[] = []; continue; }
+        $padded = [];
+        for ($i = 0; $i <= $max; $i++) $padded[] = $cells[$i] ?? '';
+        $rows[] = $padded;
+    }
+    return $rows;
 }
 
 // ── CSV Template Download ─────────────────────────────────────────────────────
@@ -381,6 +575,51 @@ if (isset($_GET['download']) && $_GET['download'] === 'template' && isset($_SESS
     fputcsv($out, $noteRow, ',', '"', '');
     foreach ($rows as $row) fputcsv($out, $row, ',', '"', '');
     fclose($out);
+    exit;
+}
+
+// ── XLSX Template Download ────────────────────────────────────────────────────
+if (isset($_GET['download']) && $_GET['download'] === 'template_xlsx' && isset($_SESSION['admin_auth'])) {
+    $isAdm = ($_SESSION['user_role'] ?? '') === 'admin';
+    $myLoc = $_SESSION['user_location'] ?? '';
+    $defaultEnt = $_SESSION['user_enterprise'] ?? '';
+
+    $headers = $isAdm
+        ? ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type']
+        : ['Employee ID','Name','Role','Enterprise','DOB','Start Date','End Date','Separation Type'];
+
+    $note = $isAdm
+        ? 'NOTE: Replace example rows. Dropdowns on Location, Enterprise, Separation Type enforce valid values. Dates: YYYY-MM-DD.'
+        : ($defaultEnt
+            ? "NOTE: Replace example rows. Leave Enterprise blank to auto-fill with: {$defaultEnt}. Dates: YYYY-MM-DD."
+            : 'NOTE: Replace example rows. Use dropdowns for valid values. Dates: YYYY-MM-DD.');
+
+    $exampleRows = $isAdm ? [
+        ['EXAMPLE-001','Full Legal Name','Software Engineer',  'Chicago, USA',          'TechTiera Corporation',                 '1990-01-15','2022-03-01','2025-12-31','voluntary'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',    'Hyderabad, India',      'TechTiera Corporation India Pvt. Ltd.', '1988-06-20','2021-07-15','2025-11-30','involuntary'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',   'Manila, Philippines',   'TechTiera Services Inc.',               '1992-11-05','2023-01-10','2025-10-15','project end'],
+    ] : [
+        ['EXAMPLE-001','Full Legal Name','Software Engineer', $defaultEnt, '1990-01-15','2022-03-01','2025-12-31','voluntary'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',   $defaultEnt, '1988-06-20','2021-07-15','2025-11-30','involuntary'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',  $defaultEnt, '1992-11-05','2023-01-10','2025-10-15','project end'],
+    ];
+
+    $allLocations = array_values(LOCATIONS);
+    $allEnterprises = array_values(array_map(fn($e) => $e['name'], ENTERPRISES));
+    $sepTypes = ['voluntary', 'involuntary', 'project end'];
+
+    // Column indices (0-based) for validation
+    if ($isAdm) { $locCol = 3; $entCol = 4; $sepCol = 8; }
+    else        { $locCol = -1; $entCol = 3; $sepCol = 7; }
+
+    $xlsx = buildXlsxTemplate($headers, $note, $exampleRows, $allLocations, $allEnterprises, $sepTypes, $locCol, $entCol, $sepCol);
+    $filename = $isAdm ? 'upload-template-admin.xlsx' : 'upload-template-' . preg_replace('/[^a-z0-9]/i','-', strtolower($myLoc)) . '.xlsx';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: no-cache');
+    header('Content-Length: ' . strlen($xlsx));
+    echo $xlsx;
     exit;
 }
 
@@ -460,23 +699,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $myLocation    = $_SESSION['user_location'] ?? '';
     $allowedSep    = ['voluntary', 'involuntary', 'project end'];
 
-    // ── Upload CSV ────────────────────────────────────────────────────────────
+    // ── Upload CSV / XLSX ─────────────────────────────────────────────────────
     if ($action === 'upload_csv') {
         if (isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] === UPLOAD_ERR_OK) {
-            // Validate file type
-            $finfo   = new finfo(FILEINFO_MIME_TYPE);
-            $mime    = $finfo->file($_FILES['csv_file']['tmp_name']);
-            $ext     = strtolower(pathinfo($_FILES['csv_file']['name'], PATHINFO_EXTENSION));
-            $okMimes = ['text/csv','text/plain','application/csv','application/vnd.ms-excel'];
-            if (!in_array($mime, $okMimes, true) || $ext !== 'csv') {
-                $error = 'Invalid file. Please upload a .csv file only.';
+            $finfo    = new finfo(FILEINFO_MIME_TYPE);
+            $mime     = $finfo->file($_FILES['csv_file']['tmp_name']);
+            $ext      = strtolower(pathinfo($_FILES['csv_file']['name'], PATHINFO_EXTENSION));
+            $okCsvM   = ['text/csv','text/plain','application/csv','application/vnd.ms-excel'];
+            $okXlsxM  = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/zip','application/x-zip'];
+            $isCsv    = ($ext === 'csv'  && in_array($mime, $okCsvM, true));
+            $isXlsx   = ($ext === 'xlsx' && in_array($mime, $okXlsxM, true));
+            if (!$isCsv && !$isXlsx) {
+                $error = 'Invalid file. Please upload a .csv or .xlsx file.';
                 goto done;
             }
+
+            // Load all rows into memory as 2D array of strings
+            $allRows = [];
+            if ($isXlsx) {
+                $allRows = parseXlsx($_FILES['csv_file']['tmp_name']);
+            } else {
+                if (($handle = fopen($_FILES['csv_file']['tmp_name'], 'r')) !== false) {
+                    while (($r = fgetcsv($handle, 0, ',', '"', '')) !== false) $allRows[] = $r;
+                    fclose($handle);
+                }
+            }
+
             $parsed = [];
-            if (($handle = fopen($_FILES['csv_file']['tmp_name'], 'r')) !== false) {
-                $rawHeaders = fgetcsv($handle, 0, ',', '"', '');
+            if ($allRows) {
+                $rawHeaders = array_shift($allRows);
                 if ($rawHeaders) {
-                    $headers = array_map(fn($h) => strtolower(trim(preg_replace('/\s+/', '', $h))), $rawHeaders);
+                    if (isset($rawHeaders[0])) $rawHeaders[0] = preg_replace('/^\xEF\xBB\xBF/', '', $rawHeaders[0]);
+                    $headers = array_map(fn($h) => strtolower(trim(preg_replace('/\s+/', '', (string)$h))), $rawHeaders);
                     $find    = fn($opts) => array_reduce($opts, fn($c, $o) => $c !== false ? $c : array_search($o, $headers), false);
                     $colMap  = [
                         'reference'      => $find(['employeeid','reference','empid','id']),
@@ -491,22 +745,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ];
                     $myEnt    = $_SESSION['user_enterprise'] ?? '';
                     $forceEnt = (!$isAdminAction && $myEnt) ? $myEnt : '';
-                    while (($row = fgetcsv($handle, 0, ',', '"', '')) !== false) {
-                        if (count(array_filter($row)) === 0) continue;
-                        // Skip example/note rows
-                        $refVal = trim($row[$colMap['reference'] ?? 0] ?? '');
+                    foreach ($allRows as $row) {
+                        if (count(array_filter($row, fn($v) => trim((string)$v) !== '')) === 0) continue;
+                        $refVal = trim((string)($row[$colMap['reference'] ?? 0] ?? ''));
                         if (preg_match('/^(e\.g\.|example[-\s]|example$|sample|notes?$|note:|format)/i', $refVal)) continue;
-                        // Non-admin: force location to their own
                         $loc    = $isAdminAction ? '' : $myLocation;
                         $record = cleanRow($colMap, $row, $loc, $forceEnt);
-                        // Default enterprise to user's primary if still blank
                         if ($record['enterprise'] === '' && $myEnt) {
                             $record['enterprise'] = $myEnt;
                         }
                         if ($record['reference']) $parsed[] = $record;
                     }
                 }
-                fclose($handle);
             }
             if ($parsed) {
                 // Always merge — upsert by reference (case-insensitive)
@@ -536,7 +786,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
                 header('Location: ' . ADMIN_URL . '?msg=uploaded'); exit;
             } else {
-                $error = 'No valid records found. Check your CSV column names match the template.';
+                $error = 'No valid records found. Check that your column names match the template (Employee ID, Name, Role, Location, Enterprise, DOB, Start Date, End Date, Separation Type).';
             }
         } else {
             $error = 'File upload failed. Please try again.';
@@ -1739,10 +1989,12 @@ function pageUrl(array $extra = []): string {
       <input type="hidden" name="action" value="upload_csv"/>
       <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-        <a href="<?= ADMIN_URL ?>?download=template" class="btn btn-outline btn-sm" style="text-decoration:none;white-space:nowrap;">⬇ Template</a>
-        <input type="file" name="csv_file" accept=".csv" required style="flex:1;min-width:160px;font-size:13px;"/>
-        <button type="submit" class="btn btn-success btn-sm" style="white-space:nowrap;">Upload CSV</button>
+        <a href="<?= ADMIN_URL ?>?download=template_xlsx" class="btn btn-outline btn-sm" style="text-decoration:none;white-space:nowrap;">⬇ Excel Template</a>
+        <a href="<?= ADMIN_URL ?>?download=template" class="btn btn-outline btn-sm" style="text-decoration:none;white-space:nowrap;">⬇ CSV Template</a>
+        <input type="file" name="csv_file" accept=".csv,.xlsx" required style="flex:1;min-width:160px;font-size:13px;"/>
+        <button type="submit" class="btn btn-success btn-sm" style="white-space:nowrap;">Upload</button>
       </div>
+      <div style="margin-top:6px;font-size:12px;color:#666;">Excel template includes dropdowns for Location, Enterprise, and Separation Type.</div>
     </form>
   </div>
 
@@ -1955,7 +2207,7 @@ function pageUrl(array $extra = []): string {
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Date of Birth (DD-MM-YYYY)</label><input type="text" name="dob" placeholder="DD-MM-YYYY" maxlength="10"/></div>
+          <div class="form-group"><label>Date of Birth</label><input type="date" name="dob"/></div>
           <div class="form-group"><label>Separation Type</label>
             <select name="separationType">
               <option value="voluntary">Voluntary</option>
@@ -1965,8 +2217,8 @@ function pageUrl(array $extra = []): string {
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Start Date (DD-MM-YYYY)</label><input type="text" name="startDate" placeholder="DD-MM-YYYY" maxlength="10"/></div>
-          <div class="form-group"><label>End Date (DD-MM-YYYY)</label><input type="text" name="endDate" placeholder="DD-MM-YYYY" maxlength="10"/></div>
+          <div class="form-group"><label>Start Date</label><input type="date" name="startDate"/></div>
+          <div class="form-group"><label>End Date</label><input type="date" name="endDate"/></div>
         </div>
       </div>
       <div class="modal-footer">
@@ -2024,7 +2276,7 @@ function pageUrl(array $extra = []): string {
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Date of Birth (DD-MM-YYYY)</label><input type="text" name="dob" id="editDob" placeholder="DD-MM-YYYY" maxlength="10"/></div>
+          <div class="form-group"><label>Date of Birth</label><input type="date" name="dob" id="editDob"/></div>
           <div class="form-group"><label>Separation Type</label>
             <select name="separationType" id="editSep">
               <option value="voluntary">Voluntary</option>
@@ -2034,8 +2286,8 @@ function pageUrl(array $extra = []): string {
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Start Date (DD-MM-YYYY)</label><input type="text" name="startDate" id="editStart" placeholder="DD-MM-YYYY" maxlength="10"/></div>
-          <div class="form-group"><label>End Date (DD-MM-YYYY)</label><input type="text" name="endDate" id="editEnd" placeholder="DD-MM-YYYY" maxlength="10"/></div>
+          <div class="form-group"><label>Start Date</label><input type="date" name="startDate" id="editStart"/></div>
+          <div class="form-group"><label>End Date</label><input type="date" name="endDate" id="editEnd"/></div>
         </div>
       </div>
       <div class="modal-footer">
@@ -2100,9 +2352,9 @@ function pageUrl(array $extra = []): string {
     document.getElementById('editRef').value   = r.reference || '';
     document.getElementById('editName').value  = r.legalName || '';
     document.getElementById('editRole').value  = r.role      || '';
-    document.getElementById('editDob').value   = toDisplay(r.dob);
-    document.getElementById('editStart').value = toDisplay(r.startDate);
-    document.getElementById('editEnd').value   = toDisplay(r.endDate);
+    document.getElementById('editDob').value   = r.dob       || '';
+    document.getElementById('editStart').value = r.startDate || '';
+    document.getElementById('editEnd').value   = r.endDate   || '';
     const sep = document.getElementById('editSep');
     if (sep) sep.value = r.separationType || 'voluntary';
     const loc = document.getElementById('editLocation');
