@@ -13,3 +13,10 @@ tt-config.json.lock
 error_log
 .gstack/
 *.zip
+
+# Dev scratch (card-variant mockups, ad-hoc test scripts)
+preview-result.html
+test-*.ps1
+test-*.csv
+test-*.xlsx
+test-*.php
