@@ -2,7 +2,7 @@
 
 ## What changed
 
-Added **Enterprise (legal entity)** as a first-class field across the system, plus a full **Admin Settings UI** to manage locations, enterprises, and user accounts. Stored in `tt-config.json` outside the web root (next to `tt-credentials.php`).
+Added **Enterprise (legal entity)** as a first-class field across the system, plus a full **Admin Settings UI** to manage locations, enterprises, and user accounts. Stored in `tt-config.json` outside the web root (next to `verify-techtiera-credentials.php`).
 
 ## Data model
 
@@ -35,7 +35,7 @@ Sydney, Dubai, Bangkok start empty — add via **Settings → Enterprises**.
 
 On first admin page load after this change:
 
-1. `tt-config.json` auto-created (locations + enterprises + users seeded; users migrated from `tt-credentials.php` with bcrypt hashes preserved).
+1. `tt-config.json` auto-created (locations + enterprises + users seeded; users migrated from `verify-techtiera-credentials.php` with bcrypt hashes preserved).
 2. All existing employee records get `enterprise = "TechTiera Corporation India Pvt. Ltd."` (since current dataset is India-only).
 
 Idempotent — re-running causes no changes.
@@ -94,15 +94,15 @@ Admin-only safeguards: cannot delete last admin, cannot delete own account, cann
 | File | Change |
 | --- | --- |
 | `admin.php` | Config loader, bootstrap + backfill, enterprise wired through add/edit/upload/export/filter, Settings page + handlers, scope enforcement, table column, modal cascades. |
-| `api.php` | `enterprise` in response; reads card variant from `tt-config.json`. |
+| `api.php` | `enterprise` in response; `cardVariant` hardcoded to `v1`. |
 | `index.html` | Enterprise rendered under name on verification result. |
 | `.htaccess` | Blocks `tt-config.json`, `tt-config.json.lock`, and `audit-YYYY-MM.json` archives from direct access. |
 | `tt-config.json` (new, outside webroot) | Auto-created on first admin load. Holds locations, enterprises, users. |
 
 ## Storage
 
-- `tt-config.json` — preferred path: `/home/<cpanel-user>/tt-config.json` (sibling of `tt-credentials.php`). Falls back to web root if parent dir isn't writable (still blocked by `.htaccess`).
-- `tt-credentials.php` — retained as the seed source on first bootstrap. Optional thereafter; the app reads `tt-config.json` for all auth.
+- `tt-config.json` — preferred path: `/home/<cpanel-user>/tt-config.json` (sibling of `verify-techtiera-credentials.php`). Falls back to web root if parent dir isn't writable (still blocked by `.htaccess`).
+- `verify-techtiera-credentials.php` — retained as the seed source on first bootstrap. Optional thereafter; the app reads `tt-config.json` for all auth.
 
 ## Security posture
 

@@ -46,7 +46,7 @@ Internal tool for TechTiera HR and recruiters to:
 | `data.json` | Employee records database (gitignored) |
 | `audit.json` | Audit log database (gitignored) |
 | `tt-config.json` | Locations + enterprises + users (lives outside public_html; gitignored). See ENTERPRISE-FEATURE.md. |
-| `tt-credentials.php` | Seed-source for first-bootstrap user credentials (bcrypt) — move above public_html, gitignored |
+| `verify-techtiera-credentials.php` | Seed-source for first-bootstrap user credentials (bcrypt) — move above public_html, gitignored |
 | `manual.html` | User manual (Admin + Location User guide) |
 | `.htaccess` | Routing, security headers, file access blocking |
 | `logo.svg` | TechTiera logo (base64-embedded in HTML/PHP) |
@@ -85,7 +85,7 @@ Internal tool for TechTiera HR and recruiters to:
 | `bangkok` | Location | Bangkok, Thailand only |
 | `jakarta` | Location | Jakarta, Indonesia only |
 
-> Passwords stored as bcrypt hashes (cost 12) in `tt-credentials.php`.  
+> Passwords stored as bcrypt hashes (cost 12) in `verify-techtiera-credentials.php`.  
 > To change a password: `php -r "echo password_hash('newpass', PASSWORD_BCRYPT);"`
 
 ---
@@ -159,9 +159,9 @@ Internal tool for TechTiera HR and recruiters to:
 - [x] Direct PHP file access blocked (.htaccess THE_REQUEST rules)
 - [x] Clean URLs: /admin → admin.php, /api → api.php, /manual → manual.html
 - [x] Security headers: X-Frame-Options DENY, CSP, HSTS, X-Content-Type-Options
-- [x] data.json, audit.json, .htaccess, tt-credentials.php all blocked from direct access
+- [x] data.json, audit.json, .htaccess, verify-techtiera-credentials.php all blocked from direct access
 - [x] Logo base64-embedded (no external requests)
-- [x] tt-credentials.php loads from above public_html first (fallback to same dir for dev)
+- [x] verify-techtiera-credentials.php loads from above public_html first (fallback to same dir for dev)
 
 ### Documentation
 - [x] User manual (manual.html) — step-by-step with HTML UI mockups
@@ -175,14 +175,14 @@ Internal tool for TechTiera HR and recruiters to:
 ## Features — Pending / Future
 
 ### High Priority
-- [ ] **Move tt-credentials.php above public_html** — file sits in web root currently; move to `/home/CPANEL_USERNAME/tt-credentials.php` via cPanel File Manager
+- [ ] **Move verify-techtiera-credentials.php above public_html** — file sits in web root currently; move to `/home/CPANEL_USERNAME/verify-techtiera-credentials.php` via cPanel File Manager
 
 ### Medium Priority
 - [ ] **Automated backup** — cPanel cron job to copy data.json daily to a backup folder. Protects against bad CSV upload wiping the database.
 
 ### Low Priority / Future
 - [ ] **MySQL migration** — flat-file JSON fine up to ~500 records; concurrent writes at scale need a real DB. cPanel gives free MySQL.
-- [ ] **Password change UI** — currently requires editing tt-credentials.php manually + running PHP hash command
+- [ ] **Password change UI** — currently requires editing verify-techtiera-credentials.php manually + running PHP hash command
 - [ ] **Email notification** — alert admin when a record is added/deleted (cPanel supports PHP mail)
 
 ---
@@ -239,16 +239,16 @@ php -S localhost:1000 router.php
 
 - Visit http://localhost:1000/ for the public verification page, http://localhost:1000/admin for the admin panel.
 - `router.php` reproduces the production `.htaccess` clean-URL routing + sensitive-file blocks for the built-in PHP server.
-- First admin load auto-bootstraps `tt-config.json` from `tt-credentials.php`. After that, `tt-config.json` is authoritative.
-- Plaintext credentials are stored as bcrypt in `tt-credentials.php` — the original plaintext lives only in the historical `tt verification live.zip` (kept outside the repo). To set a new password: `php -r "echo password_hash('newpass', PASSWORD_BCRYPT);"` and paste the hash into `tt-config.json`.
+- First admin load auto-bootstraps `tt-config.json` from `verify-techtiera-credentials.php`. After that, `tt-config.json` is authoritative.
+- Plaintext credentials are stored as bcrypt in `verify-techtiera-credentials.php` — the original plaintext lives only in the historical `tt verification live.zip` (kept outside the repo). To set a new password: `php -r "echo password_hash('newpass', PASSWORD_BCRYPT);"` and paste the hash into `tt-config.json`.
 
 ## Deployment Checklist
 
 - [ ] Upload `employee verification.zip` to cPanel File Manager
 - [ ] Extract into `verify.techteira.com` root folder
-- [ ] Confirm these files present at root: `.htaccess`, `admin.php`, `api.php`, `index.html`, `data.json`, `audit.json`, `manual.html`, `tt-credentials.php`, `logo.svg`
+- [ ] Confirm these files present at root: `.htaccess`, `admin.php`, `api.php`, `index.html`, `data.json`, `audit.json`, `manual.html`, `verify-techtiera-credentials.php`, `logo.svg`
 - [ ] Set `data.json` and `audit.json` permissions to **644** (or 666 if writes fail)
-- [ ] Move `tt-credentials.php` to `/home/CPANEL_USERNAME/tt-credentials.php`
+- [ ] Move `verify-techtiera-credentials.php` to `/home/CPANEL_USERNAME/verify-techtiera-credentials.php`
 - [ ] Test login at https://verify.techteira.com/admin
 - [ ] Test public lookup at https://verify.techteira.com
 - [ ] Test CSV upload with template

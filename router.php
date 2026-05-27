@@ -11,7 +11,7 @@ if ($uri === false || $uri === null) {
 
 // Block sensitive files + direct .php/.html that .htaccess hides in production.
 $blocked = [
-    '/data.json', '/audit.json', '/tt-credentials.php', '/tt-config.json', '/tt-config.json.lock', '/.htaccess',
+    '/data.json', '/audit.json', '/verify-techtiera-credentials.php', '/tt-config.json', '/tt-config.json.lock', '/.htaccess',
     '/admin.php', '/api.php', '/router.php', '/manual.html',
 ];
 foreach ($blocked as $b) {

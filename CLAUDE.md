@@ -21,7 +21,7 @@ PHP flat-file admin tool that lets TechTiera HR / location offices store ex-empl
 - **No composer.** Hosting is cPanel shared. No CLI access for `composer install`. Hand-roll what you need (see `buildXlsxTemplate` / `parseXlsx` in admin.php for the pattern). `ZipArchive` and `SimpleXMLElement` are available in stock PHP.
 - **No build step.** Vanilla HTML/CSS/JS. No bundler, no transpiler. Inline `<style>` and `<script>` are fine.
 - **Flat file storage.** `data.json` + `audit.json` + `tt-config.json`. Writes use `file_put_contents(..., LOCK_EX)`. Up to ~500 records this is fine; the docs flag MySQL migration as low-priority future work.
-- **Two CLAUDE.md exclusions still apply:** never commit `data.json`, `audit.json`, `tt-config.json`, `tt-credentials.php`, or `audit-YYYY-MM.json` archives. `.gitignore` enforces this — keep it.
+- **Two CLAUDE.md exclusions still apply:** never commit `data.json`, `audit.json`, `tt-config.json`, `verify-techtiera-credentials.php`, or `audit-YYYY-MM.json` archives. `.gitignore` enforces this — keep it.
 
 ## How to run locally
 
@@ -73,6 +73,6 @@ When touching `parseXlsx` or adding a new file-upload parser:
 - Don't introduce frameworks, package managers, or build steps.
 - Don't move `admin.php` content into multiple files without explicit ask.
 - Don't change date storage format from `YYYY-MM-DD`.
-- Don't commit `data.json`, `tt-config.json`, `tt-credentials.php`, or `audit*.json`.
+- Don't commit `data.json`, `tt-config.json`, `verify-techtiera-credentials.php`, or `audit*.json`.
 - Don't strip the BOM strip in CSV upload — Excel really does emit it.
 - Don't replace `LIBXML_NONET` / 25 MB cap / marker check in `parseXlsx`. They're load-bearing.

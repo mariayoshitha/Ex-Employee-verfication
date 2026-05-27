@@ -1,5 +1,6 @@
 # Secrets — NEVER commit (file must live outside public_html)
 tt-credentials.php
+verify-techtiera-credentials.php
 
 # Real employee data / PII — keep out of version control
 data.json

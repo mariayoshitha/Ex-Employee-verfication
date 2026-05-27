@@ -49,7 +49,7 @@ if (empty($_SESSION['csrf_token'])) {
 define('DATA_FILE',  __DIR__ . '/data.json');
 define('AUDIT_FILE', __DIR__ . '/audit.json');
 
-// Config file lives OUTSIDE public_html when possible (same dir as tt-credentials.php).
+// Config file lives OUTSIDE public_html when possible (same dir as verify-techtiera-credentials.php).
 // Holds: locations, enterprises, users (with bcrypt hashes).
 $_cfgFile = dirname(__DIR__) . '/tt-config.json';
 if (!file_exists($_cfgFile) && file_exists(__DIR__ . '/tt-config.json')) {
@@ -62,9 +62,9 @@ if (!file_exists($_cfgFile) && is_writable(dirname(__DIR__))) {
 define('CONFIG_FILE', $_cfgFile);
 
 // Legacy credentials file (seed source on first bootstrap, optional thereafter).
-$_credFile = dirname(__DIR__) . '/tt-credentials.php';
+$_credFile = dirname(__DIR__) . '/verify-techtiera-credentials.php';
 if (!file_exists($_credFile)) {
-    $_credFile = __DIR__ . '/tt-credentials.php';
+    $_credFile = __DIR__ . '/verify-techtiera-credentials.php';
 }
 if (file_exists($_credFile)) {
     require_once $_credFile; // defines TT_USERS if present
@@ -84,10 +84,7 @@ function loadConfig(): array {
     $d['locations']    = $d['locations']    ?? [];
     $d['enterprises']  = $d['enterprises']  ?? [];
     $d['users']        = $d['users']        ?? [];
-    $d['card_variant'] = $d['card_variant'] ?? 'v5';
-    if (!in_array($d['card_variant'], ['v1','v2','v3','v4','v5','v6'], true)) {
-        $d['card_variant'] = 'v5';
-    }
+    $d['card_variant'] = 'v1';
     return $d;
 }
 
@@ -125,9 +122,9 @@ function bootstrapConfig(): array {
     if (empty($seedUsers)) {
         // No legacy credentials and no config — refuse to boot blank.
         http_response_code(500);
-        die('Server configuration error: no credentials available. Place tt-credentials.php outside public_html.');
+        die('Server configuration error: no credentials available. Place verify-techtiera-credentials.php outside public_html.');
     }
-    $cfg = ['locations'=>$seedLocations, 'enterprises'=>$seedEnterprises, 'users'=>$seedUsers, 'card_variant'=>'v5'];
+    $cfg = ['locations'=>$seedLocations, 'enterprises'=>$seedEnterprises, 'users'=>$seedUsers, 'card_variant'=>'v1'];
     saveConfig($cfg);
 
     // One-time backfill: existing records without 'enterprise' → India default.
@@ -158,7 +155,7 @@ $_CONFIG = loadConfig();
 define('USERS',        $_CONFIG['users']);
 define('LOCATIONS',    $_CONFIG['locations']);
 define('ENTERPRISES',  $_CONFIG['enterprises']);
-define('CARD_VARIANT', $_CONFIG['card_variant']);
+define('CARD_VARIANT', 'v1');
 
 // ── Enterprise helpers ───────────────────────────────────────────────────────
 function enterprisesForLocation(string $loc): array {
@@ -902,7 +899,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'add_location','edit_location','delete_location',
         'add_enterprise','edit_enterprise','delete_enterprise',
         'add_user','edit_user','delete_user',
-        'set_card_variant',
     ];
     $__cfgLock = null;
     if (in_array($action, $settingsActions, true)) {
@@ -1146,17 +1142,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
             logAudit($_SESSION['username'] ?? '', 'settings', '', $loc, 'edit user: ' . $un . ($pw !== '' ? ' (password reset)' : ''));
             header('Location: ' . ADMIN_URL . '?page=settings&tab=users&msg=user_edited'); exit;
-        }
-
-        if ($action === 'set_card_variant') {
-            $variant = trim($_POST['card_variant'] ?? '');
-            if (!in_array($variant, ['v1','v2','v3','v4','v5','v6'], true)) {
-                $error = 'Invalid card variant.'; goto done;
-            }
-            $cfg['card_variant'] = $variant;
-            if (!saveConfig($cfg)) { $error = 'Failed to write config.'; goto done; }
-            logAudit($_SESSION['username'] ?? '', 'settings', '', '', 'set card variant: ' . $variant);
-            header('Location: ' . ADMIN_URL . '?page=settings&tab=card&msg=variant_saved'); exit;
         }
 
         if ($action === 'delete_user') {
@@ -1436,12 +1421,12 @@ function pageUrl(array $extra = []): string {
         <?= htmlspecialchars($username) ?>
         <?php if ($myLocation): ?> · <?= htmlspecialchars($myLocation) ?><?php endif; ?>
       </span>
-      <a href="/" class="portal-link" style="color:#94a3b8;">View Public Portal →</a>
-      <a href="/manual" class="portal-link" style="color:#94a3b8;" target="_blank">Help →</a>
+      <a href="/" class="portal-link" style="color:#94a3b8;">View Public Portal</a>
+      <a href="/manual" class="portal-link" style="color:#94a3b8;" target="_blank">Help</a>
       <?php if ($isAdmin): ?>
       <a href="<?= ADMIN_URL ?>" class="portal-link" style="color:#94a3b8;">Dashboard</a>
-      <a href="<?= ADMIN_URL ?>?page=settings" class="portal-link" style="color:#94a3b8;">Settings →</a>
-      <a href="<?= ADMIN_URL ?>?page=audit" class="portal-link" style="color:#94a3b8;">Audit Log →</a>
+      <a href="<?= ADMIN_URL ?>?page=settings" class="portal-link" style="color:#94a3b8;">Settings</a>
+      <a href="<?= ADMIN_URL ?>?page=audit" class="portal-link" style="color:#94a3b8;">Audit Log</a>
       <?php endif; ?>
       <form method="POST" style="display:inline;">
         <input type="hidden" name="action" value="logout"/>
@@ -1501,7 +1486,6 @@ function pageUrl(array $extra = []): string {
       'loc_added'=>'Location added.','loc_edited'=>'Location updated.','loc_deleted'=>'Location deleted.',
       'ent_added'=>'Enterprise added.','ent_edited'=>'Enterprise updated.','ent_deleted'=>'Enterprise deleted.',
       'user_added'=>'User added.','user_edited'=>'User updated.','user_deleted'=>'User deleted.',
-      'variant_saved'=>'Result card style updated.',
     ];
     if ($adminPage === 'settings' && isset($settingsMsgMap[$msgGet])):
   ?><div class="flash success">✓ <?= htmlspecialchars($settingsMsgMap[$msgGet]) ?></div><?php endif; ?>
@@ -1509,56 +1493,22 @@ function pageUrl(array $extra = []): string {
   <?php if ($adminPage === 'settings' && $isAdmin): ?>
   <!-- ── SETTINGS PAGE ─────────────────────────────────────────────────────── -->
   <?php
-    $settingsTab = trim($_GET['tab'] ?? 'card');
-    if (!in_array($settingsTab, ['card','locations','enterprises','users'], true)) $settingsTab = 'card';
+    $settingsTab = trim($_GET['tab'] ?? 'locations');
+    if (!in_array($settingsTab, ['locations','enterprises','users'], true)) $settingsTab = 'locations';
     $tabUrl = fn($t) => ADMIN_URL . '?page=settings&tab=' . $t;
   ?>
   <div style="background:white;border-radius:12px 12px 0 0;padding:20px 24px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
     <h2 style="font-size:18px;font-weight:600;margin-bottom:4px;">Settings</h2>
-    <p style="color:#6b7280;font-size:12.5px;margin-bottom:0;">Manage card style, locations, enterprises, and user accounts. Stored in <code>tt-config.json</code> outside the web root.</p>
+    <p style="color:#6b7280;font-size:12.5px;margin-bottom:0;">Manage locations, enterprises, and user accounts. Stored in <code>tt-config.json</code> outside the web root.</p>
   </div>
   <div class="settings-tabs">
     <div class="tabs">
-      <a href="<?= htmlspecialchars($tabUrl('card')) ?>" class="<?= $settingsTab==='card'?'active':'' ?>">🎨 Card Style</a>
       <a href="<?= htmlspecialchars($tabUrl('locations')) ?>" class="<?= $settingsTab==='locations'?'active':'' ?>">📍 Locations <span class="count">(<?= count(LOCATIONS) ?>)</span></a>
       <a href="<?= htmlspecialchars($tabUrl('enterprises')) ?>" class="<?= $settingsTab==='enterprises'?'active':'' ?>">🏢 Enterprises <span class="count">(<?= count(ENTERPRISES) ?>)</span></a>
       <a href="<?= htmlspecialchars($tabUrl('users')) ?>" class="<?= $settingsTab==='users'?'active':'' ?>">👤 Users <span class="count">(<?= count(USERS) ?>)</span></a>
     </div>
   </div>
   <div style="height:20px;"></div>
-
-  <?php if ($settingsTab === 'card'): ?>
-  <!-- Result Card Style -->
-  <?php
-    $variantOptions = [
-      'v1' => 'V1 · Definition list (document)',
-      'v2' => 'V2 · Timeline + pills',
-      'v3' => 'V3 · Flat grid (no boxes)',
-      'v4' => 'V4 · Certificate (formal)',
-      'v5' => 'V5 · Two-column hero (ID card)',
-      'v6' => 'V6 · Minimal typography',
-    ];
-    $currentVariant = CARD_VARIANT;
-  ?>
-  <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:20px;">
-    <h3 style="font-size:14px;font-weight:600;margin-bottom:6px;">🎨 Public Result Card Style</h3>
-    <p style="color:#6b7280;font-size:12.5px;margin-bottom:14px;">Controls how the verification result appears to the public on the home page. Change anytime — takes effect on the next lookup.</p>
-    <form method="POST" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
-      <input type="hidden" name="action" value="set_card_variant"/>
-      <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"/>
-      <div class="form-group" style="flex:1;min-width:280px;margin-bottom:0;">
-        <label>Card Layout</label>
-        <select name="card_variant" required>
-          <?php foreach ($variantOptions as $k => $label): ?>
-            <option value="<?= htmlspecialchars($k) ?>" <?= $k === $currentVariant ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </div>
-      <button type="submit" class="btn btn-success btn-sm" style="height:42px;">Save Style</button>
-    </form>
-    <p style="font-size:12px;color:#6b7280;margin-top:10px;">Current: <strong><?= htmlspecialchars($variantOptions[$currentVariant] ?? $currentVariant) ?></strong>. Preview all six at <a href="preview-result.html" target="_blank" style="color:#0066cc;">preview-result.html</a>.</p>
-  </div>
-  <?php endif; // card ?>
 
   <?php if ($settingsTab === 'locations'): ?>
   <!-- Locations -->

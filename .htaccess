@@ -24,7 +24,7 @@ RewriteRule ^ - [F,L]
 RewriteCond %{THE_REQUEST} \s/\.htaccess[\s?] [NC]
 RewriteRule ^ - [F,L]
 
-RewriteCond %{THE_REQUEST} \s/tt-credentials\.php[\s?] [NC]
+RewriteCond %{THE_REQUEST} \s/verify-techtiera-credentials\.php[\s?] [NC]
 RewriteRule ^ - [F,L]
 
 RewriteCond %{THE_REQUEST} \s/tt-config\.json[\s?] [NC]
