@@ -62,6 +62,7 @@ foreach (loadData() as $record) {
             'startDate'      => $record['startDate'],
             'endDate'        => $record['endDate'],
             'separationType' => $record['separationType'],
+            'employmentType' => $record['employmentType'] ?? 'inhouse',
             'location'       => $record['location']   ?? '',
             'enterprise'     => $record['enterprise'] ?? '',
             'cardVariant'    => 'v1',

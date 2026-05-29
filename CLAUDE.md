@@ -46,6 +46,7 @@ The codebase has no automated tests. PRs land after manual verification + a `cav
 
 - **Dates.** Stored as `YYYY-MM-DD` in JSON. `normalizeDate()` accepts ISO, DD-MM-YYYY, DD/MM/YYYY, YYYY/MM/DD, and Excel date serials (integer 25569–60000 ≈ 1970–2064). When adding date inputs to admin forms, use `<input type="date">`.
 - **Locations / Enterprises.** Source of truth is `tt-config.json`. Code references via `LOCATIONS` and `ENTERPRISES` constants populated in `loadConfig()`. Fuzzy match incoming user-supplied location strings via `matchLocation()`.
+- **Employment Type.** Hardcoded enum: `inhouse` (default) / `contract`. Stored as `employmentType`. Reads fall back to `'inhouse'` for legacy records. CSV upload accepts spelling aliases (see `cleanRow()` in admin.php).
 - **CSV column aliases.** See the `$colMap = [...]` block in `admin.php` around line 700. Accept multiple aliases per logical column (`employeeid|reference|empid|id`, etc.). When adding a new column, add aliases not just one name.
 - **Auth.** Every admin POST checks `$_SESSION['admin_auth']` AND a CSRF token. Every download endpoint checks `$_SESSION['admin_auth']`. Don't bypass.
 - **Scope enforcement.** Non-admin users have `$_SESSION['user_location']` (and sometimes `user_enterprise`) set. Server-side code MUST force the row's location/enterprise to the session value for non-admin writes, regardless of what the user submitted. See `if ($isAdminAction ? '' : $myLocation)` patterns.

@@ -4,11 +4,16 @@ verify-techtiera-credentials.php
 
 # Real employee data / PII — keep out of version control
 data.json
-data.json.bak
+data.json*
 audit.json
 audit-*.json
 tt-config.json
 tt-config.json.lock
+
+# Bulk-import source files (always contain real employee PII)
+*.xlsx
+TTID*.csv
+TTID-*-cleaned*.csv
 
 # Server + tooling artifacts
 error_log

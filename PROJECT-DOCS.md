@@ -94,7 +94,7 @@ Internal tool for TechTiera HR and recruiters to:
 
 ### Public Portal
 - [x] Employee lookup by Employee ID + Date of Birth
-- [x] Returns: name, role, location, start date, end date, separation type
+- [x] Returns: name, role, location, start date, end date, separation type, employment type (Contract / Inhouse)
 - [x] Never exposes DOB or salary
 - [x] Rate limited: 20 requests/minute per IP
 - [x] Error message if not found or wrong DOB
@@ -195,6 +195,15 @@ Internal tool for TechTiera HR and recruiters to:
 | `involuntary` | Involuntary |
 | `project end` | Project End |
 
+## Employment Types
+
+| Value (stored) | Display |
+|---|---|
+| `inhouse` | Inhouse |
+| `contract` | Contract |
+
+Default for new records and legacy records (pre-field) is `inhouse`. CSV upload accepts aliases (case-insensitive): `inhouse` / `in-house` / `in house` / `internal` / `permanent` / `fulltime` → stored as `inhouse`; `contract` / `contractor` / `consultant` / `temp` / `temporary` → stored as `contract`. Column-name aliases on upload: `Employment Type` / `Employment` / `Engagement Type` / `Engagement` / `Worker Type` / `Workforce Type` / `Employee Type`.
+
 ---
 
 ## Data Schema (data.json)
@@ -211,6 +220,7 @@ Internal tool for TechTiera HR and recruiters to:
   "startDate":      "2021-03-01",
   "endDate":        "2023-12-31",
   "separationType": "voluntary",
+  "employmentType": "inhouse",
   "lastUpdated":    "2025-05-16 14:30"
 }
 ```

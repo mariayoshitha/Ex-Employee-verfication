@@ -324,6 +324,8 @@
     .badge.voluntary    { background: #dcfce7; color: #16a34a; }
     .badge.involuntary  { background: #fee2e2; color: var(--color-danger); }
     .badge.project-end  { background: #dbeafe; color: #1d4ed8; }
+    .badge.emp-inhouse  { background: #ede9fe; color: #6d28d9; }
+    .badge.emp-contract { background: #fef3c7; color: #b45309; }
 
     /* Not found */
     .not-found {
@@ -514,6 +516,9 @@
       const sepLabel = sepRaw.replace(/\b\w/g, c => c.toUpperCase());
       const sepBadge = `<span class="badge ${esc(sepClass)}">${esc(sepLabel)}</span>`;
       const sepWord  = esc(sepLabel.toLowerCase());
+      const empRaw   = String(record.employmentType || 'inhouse').toLowerCase();
+      const empLabel = empRaw === 'contract' ? 'Contract' : 'Inhouse';
+      const empBadge = `<span class="badge emp-${esc(empRaw)}">${esc(empLabel)}</span>`;
 
       const header = `<div class="rc-header"><div class="rc-check">✓</div><span class="rc-header-text">Employment record found</span></div>`;
 
@@ -526,6 +531,7 @@
                  ${loc  ? `<dt>Location</dt><dd>${loc}</dd>` : ''}
                  ${role ? `<dt>Role</dt><dd>${role}</dd>` : ''}
                  <dt>Date of Birth</dt><dd>${dob}</dd>
+                 <dt>Employment Type</dt><dd>${empBadge}</dd>
                  <dt>Separation</dt><dd>${sepBadge}</dd>
                  <dt>Employment Start</dt><dd>${start}</dd>
                  <dt>Employment End</dt><dd>${end}</dd>

@@ -351,12 +351,19 @@
           <div class="mock-field"><span class="mock-label">Date of Birth *</span><div class="mock-input">1990-06-15</div></div>
           <div class="mock-field"><span class="mock-label">Start Date *</span><div class="mock-input">2021-03-01</div></div>
         </div>
-        <div class="mock-row" style="margin-bottom:14px;">
+        <div class="mock-row" style="margin-bottom:10px;">
           <div class="mock-field"><span class="mock-label">End Date</span><div class="mock-input" style="color:#9ca3af;">Leave blank if still employed</div></div>
           <div class="mock-field">
             <span class="mock-label">Separation Type *</span>
             <div class="mock-select" style="padding:8px 10px;border:1.5px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;">Voluntary</div>
           </div>
+        </div>
+        <div class="mock-row" style="margin-bottom:14px;">
+          <div class="mock-field">
+            <span class="mock-label">Employment Type *</span>
+            <div class="mock-select" style="padding:8px 10px;border:1.5px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;">Inhouse</div>
+          </div>
+          <div class="mock-field"></div>
         </div>
         <div style="display:flex;gap:8px;">
           <div class="mock-btn mock-btn-success mock-btn-sm">Save Record</div>
@@ -376,7 +383,7 @@
     <li>
       <div class="step-body">
         <strong>Fill in required fields (marked *)</strong>
-        <span>Employee ID, Full Name, Role, Location, Date of Birth, Start Date, and Separation Type are all required.</span>
+        <span>Employee ID, Full Name, Role, Location, Date of Birth, Start Date, Separation Type, and Employment Type (Inhouse / Contract) are all required.</span>
       </div>
     </li>
     <li>
@@ -544,6 +551,7 @@
           <tr><td>F</td><td>startDate</td><td>2021-03-01</td><td>&#9989;</td></tr>
           <tr><td>G</td><td>endDate</td><td>2023-12-31 (blank if active)</td><td>&#10060;</td></tr>
           <tr><td>H</td><td>separationType</td><td>Voluntary</td><td>&#9989;</td></tr>
+          <tr><td>I</td><td>employmentType</td><td>Inhouse / Contract</td><td>&#9989;</td></tr>
         </tbody>
       </table>
     </div>
@@ -742,7 +750,7 @@
     <div class="callout-icon">&#9989;</div>
     <div class="callout-body">
       <strong>What a successful lookup shows</strong>
-      Name, role, location, start date, end date (if applicable), and separation type. Never shows date of birth or salary.
+      Name, role, location, start date, end date (if applicable), separation type, and employment type (Inhouse / Contract). Never shows date of birth or salary.
     </div>
   </div>
 
@@ -774,6 +782,7 @@
           <tr><td><code>startDate</code></td><td>&#9989;</td><td><code>YYYY-MM-DD</code></td></tr>
           <tr><td><code>endDate</code></td><td>&#10060;</td><td><code>YYYY-MM-DD</code>, or blank if still employed</td></tr>
           <tr><td><code>separationType</code></td><td>&#9989;</td><td><code>voluntary</code> / <code>involuntary</code> / <code>project end</code></td></tr>
+          <tr><td><code>employmentType</code></td><td>&#9989;</td><td><code>inhouse</code> / <code>contract</code> — defaults to <code>inhouse</code> if blank</td></tr>
         </tbody>
       </table>
     </div>

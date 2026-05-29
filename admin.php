@@ -319,6 +319,12 @@ function cleanRow(array $colMap, array $row, string $location = '', string $ente
     $allowedSep = ['voluntary', 'involuntary', 'project end'];
     $sep = strtolower(trim($get('separationType')));
     if (!in_array($sep, $allowedSep, true)) $sep = 'voluntary';
+    $allowedEmp = ['contract', 'inhouse'];
+    $emp = strtolower(trim($get('employmentType')));
+    // Accept common spellings/aliases for inhouse
+    if (in_array($emp, ['in-house', 'in house', 'in_house', 'internal', 'permanent', 'fulltime', 'full-time', 'full time'], true)) $emp = 'inhouse';
+    if (in_array($emp, ['contractor', 'contracting', 'consultant', 'temp', 'temporary'], true)) $emp = 'contract';
+    if (!in_array($emp, $allowedEmp, true)) $emp = 'inhouse';
     return [
         'id'             => generateId(),
         'reference'      => sanitizeText($get('reference'), 50),
@@ -330,6 +336,7 @@ function cleanRow(array $colMap, array $row, string $location = '', string $ente
         'startDate'      => validateDate($get('startDate')),
         'endDate'        => validateDate($get('endDate')),
         'separationType' => $sep,
+        'employmentType' => $emp,
         'lastUpdated'    => nowStamp(),
     ];
 }
@@ -381,7 +388,7 @@ function xlsxBuildSheet(array $rows, array $validations): string {
     $xml .= '</worksheet>';
     return $xml;
 }
-function buildXlsxTemplate(array $headers, string $note, array $exampleRows, array $locations, array $enterprises, array $sepTypes, int $locCol, int $entCol, int $sepCol): string {
+function buildXlsxTemplate(array $headers, string $note, array $exampleRows, array $locations, array $enterprises, array $sepTypes, array $empTypes, int $locCol, int $entCol, int $sepCol, int $empCol): string {
     $strings = [];
     $idx = function(string $s) use (&$strings): int {
         $k = array_search($s, $strings, true);
@@ -401,12 +408,13 @@ function buildXlsxTemplate(array $headers, string $note, array $exampleRows, arr
         $rows[] = $cells;
     }
     $listRows = [];
-    $maxList = max(count($locations), count($enterprises), count($sepTypes));
+    $maxList = max(count($locations), count($enterprises), count($sepTypes), count($empTypes));
     for ($i = 0; $i < $maxList; $i++) {
         $listRows[] = [
             $i < count($locations)   ? ['s', $idx($locations[$i])]   : null,
             $i < count($enterprises) ? ['s', $idx($enterprises[$i])] : null,
             $i < count($sepTypes)    ? ['s', $idx($sepTypes[$i])]    : null,
+            $i < count($empTypes)    ? ['s', $idx($empTypes[$i])]    : null,
         ];
     }
     $endRow = 2 + count($exampleRows) + 500;
@@ -414,6 +422,7 @@ function buildXlsxTemplate(array $headers, string $note, array $exampleRows, arr
     if ($locCol >= 0 && $locations)   $vals[] = ['col' => $locCol, 'from' => 3, 'to' => $endRow, 'list' => 'Lists!$A$1:$A$' . count($locations)];
     if ($entCol >= 0 && $enterprises) $vals[] = ['col' => $entCol, 'from' => 3, 'to' => $endRow, 'list' => 'Lists!$B$1:$B$' . count($enterprises)];
     if ($sepCol >= 0 && $sepTypes)    $vals[] = ['col' => $sepCol, 'from' => 3, 'to' => $endRow, 'list' => 'Lists!$C$1:$C$' . count($sepTypes)];
+    if ($empCol >= 0 && $empTypes)    $vals[] = ['col' => $empCol, 'from' => 3, 'to' => $endRow, 'list' => 'Lists!$D$1:$D$' . count($empTypes)];
 
     $sheet1 = xlsxBuildSheet($rows, $vals);
     $sheet2 = xlsxBuildSheet($listRows, []);
@@ -526,34 +535,34 @@ if (isset($_GET['download']) && $_GET['download'] === 'template' && isset($_SESS
     $myLoc = $_SESSION['user_location'] ?? '';
 
     $headers = $isAdm
-        ? ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type']
-        : ['Employee ID','Name','Role','Enterprise','DOB','Start Date','End Date','Separation Type'];
+        ? ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type','Employment Type']
+        : ['Employee ID','Name','Role','Enterprise','DOB','Start Date','End Date','Separation Type','Employment Type'];
 
     $defaultEnt = $_SESSION['user_enterprise'] ?? '';
     $note = $isAdm
-        ? 'NOTE: Replace example rows. Enterprise must match a configured entity for the row\'s location.'
+        ? 'NOTE: Replace example rows. Enterprise must match a configured entity for the row\'s location. Employment Type: contract or inhouse.'
         : ($defaultEnt
-            ? "NOTE: Replace example rows. Leave Enterprise blank to auto-fill with: {$defaultEnt}."
-            : 'NOTE: Replace example rows. Enterprise column accepts any entity configured for your location.');
+            ? "NOTE: Replace example rows. Leave Enterprise blank to auto-fill with: {$defaultEnt}. Employment Type: contract or inhouse."
+            : 'NOTE: Replace example rows. Enterprise column accepts any entity configured for your location. Employment Type: contract or inhouse.');
 
     $rows = $isAdm ? [
-        ['EXAMPLE-001','Full Legal Name','Software Engineer',  'Chicago, USA',          'TechTiera Corporation',                 '1990-01-15','2022-03-01','2025-12-31','voluntary'],
-        ['EXAMPLE-002','Full Legal Name','Project Manager',    'Hyderabad, India',      'TechTiera Corporation India Pvt. Ltd.', '1988-06-20','2021-07-15','2025-11-30','involuntary'],
-        ['EXAMPLE-003','Full Legal Name','Business Analyst',   'Manila, Philippines',   'TechTiera Services Inc.',               '1992-11-05','2023-01-10','2025-10-15','project end'],
-        ['EXAMPLE-004','Full Legal Name','Operations Lead',    'Singapore',             'TechTiera Pte. Ltd.',                   '1991-03-22','2020-09-01','2025-08-31','voluntary'],
-        ['EXAMPLE-005','Full Legal Name','HR Coordinator',     'Kuala Lumpur, Malaysia','TechTiera Sdn. Bhd',                    '1994-07-14','2022-06-15','2025-07-20','involuntary'],
-        ['EXAMPLE-006','Full Legal Name','Finance Analyst',    'Sydney, Australia',     '',                                      '1989-12-01','2019-04-01','2025-06-30','voluntary'],
-        ['EXAMPLE-007','Full Legal Name','Recruitment Lead',   'Dubai, UAE',            '',                                      '1993-09-18','2021-11-01','2025-05-15','project end'],
-        ['EXAMPLE-008','Full Legal Name','Training Specialist','Bangkok, Thailand',     '',                                      '1995-05-30','2023-02-01','2025-09-30','involuntary'],
-        ['EXAMPLE-009','Full Legal Name','Admin Executive',    'Jakarta, Indonesia',    'PT TechTiera Services',                 '1996-08-10','2022-08-15','2025-11-01','voluntary'],
+        ['EXAMPLE-001','Full Legal Name','Software Engineer',  'Chicago, USA',          'TechTiera Corporation',                 '1990-01-15','2022-03-01','2025-12-31','voluntary',  'inhouse'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',    'Hyderabad, India',      'TechTiera Corporation India Pvt. Ltd.', '1988-06-20','2021-07-15','2025-11-30','involuntary','inhouse'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',   'Manila, Philippines',   'TechTiera Services Inc.',               '1992-11-05','2023-01-10','2025-10-15','project end','contract'],
+        ['EXAMPLE-004','Full Legal Name','Operations Lead',    'Singapore',             'TechTiera Pte. Ltd.',                   '1991-03-22','2020-09-01','2025-08-31','voluntary',  'inhouse'],
+        ['EXAMPLE-005','Full Legal Name','HR Coordinator',     'Kuala Lumpur, Malaysia','TechTiera Sdn. Bhd',                    '1994-07-14','2022-06-15','2025-07-20','involuntary','contract'],
+        ['EXAMPLE-006','Full Legal Name','Finance Analyst',    'Sydney, Australia',     '',                                      '1989-12-01','2019-04-01','2025-06-30','voluntary',  'inhouse'],
+        ['EXAMPLE-007','Full Legal Name','Recruitment Lead',   'Dubai, UAE',            '',                                      '1993-09-18','2021-11-01','2025-05-15','project end','contract'],
+        ['EXAMPLE-008','Full Legal Name','Training Specialist','Bangkok, Thailand',     '',                                      '1995-05-30','2023-02-01','2025-09-30','involuntary','inhouse'],
+        ['EXAMPLE-009','Full Legal Name','Admin Executive',    'Jakarta, Indonesia',    'PT TechTiera Services',                 '1996-08-10','2022-08-15','2025-11-01','voluntary',  'inhouse'],
     ] : [
-        ['EXAMPLE-001','Full Legal Name','Software Engineer', $defaultEnt, '1990-01-15','2022-03-01','2025-12-31','voluntary'],
-        ['EXAMPLE-002','Full Legal Name','Project Manager',   $defaultEnt, '1988-06-20','2021-07-15','2025-11-30','involuntary'],
-        ['EXAMPLE-003','Full Legal Name','Business Analyst',  $defaultEnt, '1992-11-05','2023-01-10','2025-10-15','project end'],
-        ['EXAMPLE-004','Full Legal Name','Operations Lead',   $defaultEnt, '1991-03-22','2020-09-01','2025-08-31','voluntary'],
-        ['EXAMPLE-005','Full Legal Name','HR Coordinator',    $defaultEnt, '1994-07-14','2022-06-15','2025-07-20','involuntary'],
-        ['EXAMPLE-006','Full Legal Name','Finance Analyst',   $defaultEnt, '1989-12-01','2019-04-01','2025-06-30','voluntary'],
-        ['EXAMPLE-007','Full Legal Name','Recruitment Lead',  $defaultEnt, '1993-09-18','2021-11-01','2025-05-15','project end'],
+        ['EXAMPLE-001','Full Legal Name','Software Engineer', $defaultEnt, '1990-01-15','2022-03-01','2025-12-31','voluntary',  'inhouse'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',   $defaultEnt, '1988-06-20','2021-07-15','2025-11-30','involuntary','inhouse'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',  $defaultEnt, '1992-11-05','2023-01-10','2025-10-15','project end','contract'],
+        ['EXAMPLE-004','Full Legal Name','Operations Lead',   $defaultEnt, '1991-03-22','2020-09-01','2025-08-31','voluntary',  'inhouse'],
+        ['EXAMPLE-005','Full Legal Name','HR Coordinator',    $defaultEnt, '1994-07-14','2022-06-15','2025-07-20','involuntary','contract'],
+        ['EXAMPLE-006','Full Legal Name','Finance Analyst',   $defaultEnt, '1989-12-01','2019-04-01','2025-06-30','voluntary',  'inhouse'],
+        ['EXAMPLE-007','Full Legal Name','Recruitment Lead',  $defaultEnt, '1993-09-18','2021-11-01','2025-05-15','project end','contract'],
     ];
 
     $filename = $isAdm ? 'upload-template-admin.csv' : 'upload-template-' . preg_replace('/[^a-z0-9]/i','-', strtolower($myLoc)) . '.csv';
@@ -582,34 +591,35 @@ if (isset($_GET['download']) && $_GET['download'] === 'template_xlsx' && isset($
     $defaultEnt = $_SESSION['user_enterprise'] ?? '';
 
     $headers = $isAdm
-        ? ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type']
-        : ['Employee ID','Name','Role','Enterprise','DOB','Start Date','End Date','Separation Type'];
+        ? ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type','Employment Type']
+        : ['Employee ID','Name','Role','Enterprise','DOB','Start Date','End Date','Separation Type','Employment Type'];
 
     $note = $isAdm
-        ? 'NOTE: Replace example rows. Dropdowns on Location, Enterprise, Separation Type enforce valid values. Dates: YYYY-MM-DD.'
+        ? 'NOTE: Replace example rows. Dropdowns on Location, Enterprise, Separation Type, Employment Type enforce valid values. Dates: YYYY-MM-DD.'
         : ($defaultEnt
             ? "NOTE: Replace example rows. Leave Enterprise blank to auto-fill with: {$defaultEnt}. Dates: YYYY-MM-DD."
             : 'NOTE: Replace example rows. Use dropdowns for valid values. Dates: YYYY-MM-DD.');
 
     $exampleRows = $isAdm ? [
-        ['EXAMPLE-001','Full Legal Name','Software Engineer',  'Chicago, USA',          'TechTiera Corporation',                 '1990-01-15','2022-03-01','2025-12-31','voluntary'],
-        ['EXAMPLE-002','Full Legal Name','Project Manager',    'Hyderabad, India',      'TechTiera Corporation India Pvt. Ltd.', '1988-06-20','2021-07-15','2025-11-30','involuntary'],
-        ['EXAMPLE-003','Full Legal Name','Business Analyst',   'Manila, Philippines',   'TechTiera Services Inc.',               '1992-11-05','2023-01-10','2025-10-15','project end'],
+        ['EXAMPLE-001','Full Legal Name','Software Engineer',  'Chicago, USA',          'TechTiera Corporation',                 '1990-01-15','2022-03-01','2025-12-31','voluntary',  'inhouse'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',    'Hyderabad, India',      'TechTiera Corporation India Pvt. Ltd.', '1988-06-20','2021-07-15','2025-11-30','involuntary','inhouse'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',   'Manila, Philippines',   'TechTiera Services Inc.',               '1992-11-05','2023-01-10','2025-10-15','project end','contract'],
     ] : [
-        ['EXAMPLE-001','Full Legal Name','Software Engineer', $defaultEnt, '1990-01-15','2022-03-01','2025-12-31','voluntary'],
-        ['EXAMPLE-002','Full Legal Name','Project Manager',   $defaultEnt, '1988-06-20','2021-07-15','2025-11-30','involuntary'],
-        ['EXAMPLE-003','Full Legal Name','Business Analyst',  $defaultEnt, '1992-11-05','2023-01-10','2025-10-15','project end'],
+        ['EXAMPLE-001','Full Legal Name','Software Engineer', $defaultEnt, '1990-01-15','2022-03-01','2025-12-31','voluntary',  'inhouse'],
+        ['EXAMPLE-002','Full Legal Name','Project Manager',   $defaultEnt, '1988-06-20','2021-07-15','2025-11-30','involuntary','inhouse'],
+        ['EXAMPLE-003','Full Legal Name','Business Analyst',  $defaultEnt, '1992-11-05','2023-01-10','2025-10-15','project end','contract'],
     ];
 
     $allLocations = array_values(LOCATIONS);
     $allEnterprises = array_values(array_map(fn($e) => $e['name'], ENTERPRISES));
     $sepTypes = ['voluntary', 'involuntary', 'project end'];
+    $empTypes = ['contract', 'inhouse'];
 
     // Column indices (0-based) for validation
-    if ($isAdm) { $locCol = 3; $entCol = 4; $sepCol = 8; }
-    else        { $locCol = -1; $entCol = 3; $sepCol = 7; }
+    if ($isAdm) { $locCol = 3; $entCol = 4; $sepCol = 8; $empCol = 9; }
+    else        { $locCol = -1; $entCol = 3; $sepCol = 7; $empCol = 8; }
 
-    $xlsx = buildXlsxTemplate($headers, $note, $exampleRows, $allLocations, $allEnterprises, $sepTypes, $locCol, $entCol, $sepCol);
+    $xlsx = buildXlsxTemplate($headers, $note, $exampleRows, $allLocations, $allEnterprises, $sepTypes, $empTypes, $locCol, $entCol, $sepCol, $empCol);
     $filename = $isAdm ? 'upload-template-admin.xlsx' : 'upload-template-' . preg_replace('/[^a-z0-9]/i','-', strtolower($myLoc)) . '.xlsx';
     while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -695,6 +705,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $isAdminAction = ($_SESSION['user_role'] ?? '') === 'admin';
     $myLocation    = $_SESSION['user_location'] ?? '';
     $allowedSep    = ['voluntary', 'involuntary', 'project end'];
+    $allowedEmp    = ['contract', 'inhouse'];
 
     // ── Upload CSV / XLSX ─────────────────────────────────────────────────────
     if ($action === 'upload_csv') {
@@ -727,7 +738,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $rawHeaders = array_shift($allRows);
                 if ($rawHeaders) {
                     if (isset($rawHeaders[0])) $rawHeaders[0] = preg_replace('/^\xEF\xBB\xBF/', '', $rawHeaders[0]);
-                    $headers = array_map(fn($h) => strtolower(trim(preg_replace('/\s+/', '', (string)$h))), $rawHeaders);
+                    // Strip whitespace and wrapping quotes — fputcsv may quote header cells with spaces ("Employee ID"),
+                    // and combined with a BOM the opening quote stops being field-leading for fgetcsv,
+                    // so it gets stored literally in the parsed cell. Trim handles both cases.
+                    $headers = array_map(fn($h) => strtolower(trim(preg_replace('/\s+/', '', (string)$h), "\"'")), $rawHeaders);
                     $find    = fn($opts) => array_reduce($opts, fn($c, $o) => $c !== false ? $c : array_search($o, $headers), false);
                     $colMap  = [
                         'reference'      => $find(['employeeid','reference','empid','id']),
@@ -739,6 +753,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'startDate'      => $find(['startdate','start','joiningdate','dateofjoining']),
                         'endDate'        => $find(['enddate','end','lastworkingdate','relievingdate']),
                         'separationType' => $find(['separationtype','separation','terminationtype','termination','exittype']),
+                        'employmentType' => $find(['employmenttype','employment','engagementtype','engagement','workertype','workforcetype','employeetype']),
                     ];
                     $myEnt    = $_SESSION['user_enterprise'] ?? '';
                     $forceEnt = (!$isAdminAction && $myEnt) ? $myEnt : '';
@@ -783,7 +798,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
                 header('Location: ' . ADMIN_URL . '?msg=uploaded'); exit;
             } else {
-                $error = 'No valid records found. Check that your column names match the template (Employee ID, Name, Role, Location, Enterprise, DOB, Start Date, End Date, Separation Type).';
+                $error = 'No valid records found. Check that your column names match the template (Employee ID, Name, Role, Location, Enterprise, DOB, Start Date, End Date, Separation Type, Employment Type).';
             }
         } else {
             $error = 'File upload failed. Please try again.';
@@ -796,9 +811,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── Add record ────────────────────────────────────────────────────────────
     if ($action === 'add_record') {
         $sep    = strtolower(trim($_POST['separationType'] ?? ''));
+        $emp    = strtolower(trim($_POST['employmentType'] ?? ''));
         $newRef = sanitizeText(trim($_POST['reference'] ?? ''), 50);
         if (!$newRef) { $error = 'Employee ID is required.'; goto done; }
         if (!in_array($sep, $allowedSep, true)) { $error = 'Invalid separation type.'; goto done; }
+        if (!in_array($emp, $allowedEmp, true)) { $error = 'Invalid employment type.'; goto done; }
         $loc  = $isAdminAction ? trim($_POST['location'] ?? '') : $myLocation;
         // Enterprise: admin/unconstrained → form value; constrained user → forced
         $entIn = trim($_POST['enterprise'] ?? '');
@@ -822,6 +839,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'startDate'      => normalizeDate(trim($_POST['startDate'] ?? '')),
             'endDate'        => normalizeDate(trim($_POST['endDate'] ?? '')),
             'separationType' => $sep,
+            'employmentType' => $emp,
             'lastUpdated'    => nowStamp(),
         ];
         if (!saveData($data)) { $error = 'Failed to write data.json — check file permissions.'; goto done; }
@@ -832,7 +850,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── Edit record ───────────────────────────────────────────────────────────
     if ($action === 'edit_record') {
         $sep = strtolower(trim($_POST['separationType'] ?? ''));
+        $emp = strtolower(trim($_POST['employmentType'] ?? ''));
         if (!in_array($sep, $allowedSep, true)) { $error = 'Invalid separation type.'; goto done; }
+        if (!in_array($emp, $allowedEmp, true)) { $error = 'Invalid employment type.'; goto done; }
         $data = loadData();
         $id   = $_POST['id'] ?? '';
         foreach ($data as &$record) {
@@ -858,6 +878,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $record['startDate']      = normalizeDate(trim($_POST['startDate']));
             $record['endDate']        = normalizeDate(trim($_POST['endDate']));
             $record['separationType'] = $sep;
+            $record['employmentType'] = $emp;
             $record['lastUpdated']    = nowStamp();
             break;
         }
@@ -1198,6 +1219,7 @@ if ($search) {
 $filterType       = trim($_GET['type'] ?? '');
 $filterLocation   = $isAdmin ? trim($_GET['loc'] ?? '') : '';
 $filterEnterprise = trim($_GET['ent'] ?? '');
+$filterEmpType    = trim($_GET['etype'] ?? '');
 if ($filterType !== '') {
     $filtered = array_values(array_filter($filtered, fn($r) => strcasecmp($r['separationType'] ?? '', $filterType) === 0));
 }
@@ -1206,6 +1228,9 @@ if ($filterLocation !== '') {
 }
 if ($filterEnterprise !== '') {
     $filtered = array_values(array_filter($filtered, fn($r) => ($r['enterprise'] ?? '') === $filterEnterprise));
+}
+if ($filterEmpType !== '') {
+    $filtered = array_values(array_filter($filtered, fn($r) => strcasecmp($r['employmentType'] ?? 'inhouse', $filterEmpType) === 0));
 }
 
 // ── CSV Export (uses same filters/scope as the table view) ────────────────────
@@ -1216,7 +1241,7 @@ if (isset($_GET['download']) && $_GET['download'] === 'export' && $isLoggedIn) {
     header('Cache-Control: no-cache');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");
-    fputcsv($out, ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type','Last Updated'], ',', '"', '');
+    fputcsv($out, ['Employee ID','Name','Role','Location','Enterprise','DOB','Start Date','End Date','Separation Type','Employment Type','Last Updated'], ',', '"', '');
     foreach ($filtered as $r) {
         fputcsv($out, [
             $r['reference']      ?? '',
@@ -1228,6 +1253,7 @@ if (isset($_GET['download']) && $_GET['download'] === 'export' && $isLoggedIn) {
             $r['startDate']      ?? '',
             $r['endDate']        ?? '',
             $r['separationType'] ?? '',
+            $r['employmentType'] ?? 'inhouse',
             $r['lastUpdated']    ?? '',
         ], ',', '"', '');
     }
@@ -1247,11 +1273,12 @@ $paginated     = array_slice($filtered, ($page - 1) * $perPage, $perPage);
 function pageUrl(array $extra = []): string {
     $params = array_merge(
         array_filter([
-            'q'    => trim($_GET['q']    ?? ''),
-            'type' => trim($_GET['type'] ?? ''),
-            'loc'  => trim($_GET['loc']  ?? ''),
-            'ent'  => trim($_GET['ent']  ?? ''),
-            'pp'   => ($_GET['pp'] ?? '') !== '50' ? ($_GET['pp'] ?? '') : '',
+            'q'     => trim($_GET['q']     ?? ''),
+            'type'  => trim($_GET['type']  ?? ''),
+            'loc'   => trim($_GET['loc']   ?? ''),
+            'ent'   => trim($_GET['ent']   ?? ''),
+            'etype' => trim($_GET['etype'] ?? ''),
+            'pp'    => ($_GET['pp'] ?? '') !== '50' ? ($_GET['pp'] ?? '') : '',
         ]),
         $extra
     );
@@ -1324,6 +1351,8 @@ function pageUrl(array $extra = []): string {
     .badge.voluntary   { background: #dcfce7; color: #16a34a; }
     .badge.involuntary { background: #fee2e2; color: #dc2626; }
     .badge.project-end { background: #dbeafe; color: #1d4ed8; }
+    .badge.emp-inhouse  { background: #ede9fe; color: #6d28d9; }
+    .badge.emp-contract { background: #fef3c7; color: #b45309; }
     .loc-pill { display: inline-flex; align-items: center; gap: 4px; background: #f3f4f6; color: #374151; border-radius: 12px; padding: 2px 8px; font-size: 11.5px; white-space: nowrap; }
     .actions { display: flex; gap: 6px; }
     .empty-state { text-align: center; padding: 48px 20px; color: #9ca3af; font-size: 14px; }
@@ -1901,17 +1930,30 @@ function pageUrl(array $extra = []): string {
   <?php if ($isAdmin): ?>
   <!-- DB Status — admin only -->
   <?php
-    // Build per-location stats from all records (unfiltered)
+    // Build per-location + per-enterprise stats from all records (unfiltered)
     $allRecs = loadData();
     $locStats = [];
+    $entStats = [];
     foreach ($allRecs as $r) {
         $l = $r['location'] ?? 'Unknown';
         if (!isset($locStats[$l])) $locStats[$l] = ['count' => 0, 'lastUpdated' => ''];
         $locStats[$l]['count']++;
         if (($r['lastUpdated'] ?? '') > $locStats[$l]['lastUpdated'])
             $locStats[$l]['lastUpdated'] = $r['lastUpdated'];
+        $e = trim($r['enterprise'] ?? '') !== '' ? $r['enterprise'] : '(Unassigned)';
+        if (!isset($entStats[$e])) $entStats[$e] = ['count' => 0, 'lastUpdated' => '', 'location' => ''];
+        $entStats[$e]['count']++;
+        if (($r['lastUpdated'] ?? '') > $entStats[$e]['lastUpdated'])
+            $entStats[$e]['lastUpdated'] = $r['lastUpdated'];
+    }
+    // Resolve canonical enterprise→location from config (falls back to '' if unknown)
+    foreach (ENTERPRISES as $entCfg) {
+        if (isset($entStats[$entCfg['name']])) {
+            $entStats[$entCfg['name']]['location'] = $entCfg['location'] ?? '';
+        }
     }
     ksort($locStats);
+    ksort($entStats);
   ?>
   <div class="db-status">
     <h3>📊 Database Status — By Location</h3>
@@ -1922,6 +1964,26 @@ function pageUrl(array $extra = []): string {
         <?php foreach ($locStats as $locName => $stat): ?>
           <div class="loc-card">
             <div class="loc-name"><?= htmlspecialchars($locName) ?></div>
+            <div class="loc-count"><?= $stat['count'] ?></div>
+            <div class="loc-updated">Last updated: <?= htmlspecialchars($stat['lastUpdated'] ?: '—') ?></div>
+          </div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
+  </div>
+
+  <div class="db-status">
+    <h3>🏢 Database Status — By Enterprise</h3>
+    <?php if (empty($entStats)): ?>
+      <p style="color:#9ca3af;font-size:13px;">No records in database yet.</p>
+    <?php else: ?>
+      <div class="loc-grid">
+        <?php foreach ($entStats as $entName => $stat): ?>
+          <div class="loc-card">
+            <div class="loc-name"><?= htmlspecialchars($entName) ?></div>
+            <?php if (!empty($stat['location'])): ?>
+              <div style="font-size:11px;color:#6b7280;margin-top:2px;"><?= htmlspecialchars($stat['location']) ?></div>
+            <?php endif; ?>
             <div class="loc-count"><?= $stat['count'] ?></div>
             <div class="loc-updated">Last updated: <?= htmlspecialchars($stat['lastUpdated'] ?: '—') ?></div>
           </div>
@@ -1944,7 +2006,7 @@ function pageUrl(array $extra = []): string {
         <input type="file" name="csv_file" accept=".csv,.xlsx" required style="flex:1;min-width:160px;font-size:13px;"/>
         <button type="submit" class="btn btn-success btn-sm" style="white-space:nowrap;">Upload</button>
       </div>
-      <div style="margin-top:6px;font-size:12px;color:#666;">Excel template includes dropdowns for Location, Enterprise, and Separation Type.</div>
+      <div style="margin-top:6px;font-size:12px;color:#666;">Excel template includes dropdowns for Location, Enterprise, Separation Type, and Employment Type.</div>
     </form>
   </div>
 
@@ -1988,12 +2050,17 @@ function pageUrl(array $extra = []): string {
     <?php else: ?>
     <input type="hidden" name="ent" value="<?= htmlspecialchars($entLocked ? $myEnterprise : '') ?>"/>
     <?php endif; ?>
+    <select name="etype" onchange="this.form.submit()" style="width:140px;padding:8px 10px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:13px;background:white;cursor:pointer;">
+      <option value="">All Employment</option>
+      <option value="inhouse"  <?= $filterEmpType==='inhouse' ?'selected':'' ?>>Inhouse</option>
+      <option value="contract" <?= $filterEmpType==='contract'?'selected':'' ?>>Contract</option>
+    </select>
     <select name="pp" onchange="this.form.submit()" style="width:100px;padding:8px 10px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:13px;background:white;cursor:pointer;">
       <option value="25"  <?= $perPage===25 ?'selected':'' ?>>25 / page</option>
       <option value="50"  <?= $perPage===50 ?'selected':'' ?>>50 / page</option>
       <option value="100" <?= $perPage===100?'selected':'' ?>>100 / page</option>
     </select>
-    <?php if ($search || $filterType || $filterLocation || $filterEnterprise): ?>
+    <?php if ($search || $filterType || $filterLocation || $filterEnterprise || $filterEmpType): ?>
       <a href="<?= ADMIN_URL ?>" class="btn btn-outline btn-sm">✕ Clear</a>
     <?php endif; ?>
     <a href="<?= htmlspecialchars(pageUrl(['download' => 'export'])) ?>" class="btn btn-outline btn-sm" style="white-space:nowrap;">⬇ Export CSV</a>
@@ -2026,19 +2093,22 @@ function pageUrl(array $extra = []): string {
             <th>Start Date</th>
             <th>End Date</th>
             <th>Type</th>
+            <th>Employment</th>
             <th>Updated</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
         <?php if (empty($paginated)): ?>
-          <tr><td colspan="11" class="empty-state"><?= $total === 0 ? 'No records yet. Upload a CSV or add manually.' : 'No records match your search.' ?></td></tr>
+          <tr><td colspan="12" class="empty-state"><?= $total === 0 ? 'No records yet. Upload a CSV or add manually.' : 'No records match your search.' ?></td></tr>
         <?php else: ?>
           <?php foreach ($paginated as $r): ?>
             <?php
               $sep   = $r['separationType'] ?? '';
               $sc    = str_replace(' ', '-', $sep);
               $sl    = ucwords($sep);
+              $emp   = $r['employmentType'] ?? 'inhouse';
+              $el    = $emp === 'contract' ? 'Contract' : 'Inhouse';
             ?>
             <tr>
               <td><span class="ref-code"><?= htmlspecialchars($r['reference'] ?? '') ?></span></td>
@@ -2050,6 +2120,7 @@ function pageUrl(array $extra = []): string {
               <td><?= htmlspecialchars(displayDate($r['startDate'] ?? '')) ?></td>
               <td><?= htmlspecialchars(displayDate($r['endDate'] ?? '')) ?></td>
               <td><span class="badge <?= htmlspecialchars($sc) ?>"><?= htmlspecialchars($sl) ?></span></td>
+              <td><span class="badge emp-<?= htmlspecialchars($emp) ?>"><?= htmlspecialchars($el) ?></span></td>
               <td style="font-size:12px;color:#6b7280;"><?= htmlspecialchars($r['lastUpdated'] ?? '—') ?></td>
               <td>
                 <div class="actions">
@@ -2170,6 +2241,15 @@ function pageUrl(array $extra = []): string {
           <div class="form-group"><label>Start Date</label><input type="date" name="startDate"/></div>
           <div class="form-group"><label>End Date</label><input type="date" name="endDate"/></div>
         </div>
+        <div class="form-row">
+          <div class="form-group"><label>Employment Type</label>
+            <select name="employmentType">
+              <option value="inhouse">Inhouse</option>
+              <option value="contract">Contract</option>
+            </select>
+          </div>
+          <div class="form-group"></div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline" onclick="document.getElementById('addModal').style.display='none'">Cancel</button>
@@ -2239,6 +2319,15 @@ function pageUrl(array $extra = []): string {
           <div class="form-group"><label>Start Date</label><input type="date" name="startDate" id="editStart"/></div>
           <div class="form-group"><label>End Date</label><input type="date" name="endDate" id="editEnd"/></div>
         </div>
+        <div class="form-row">
+          <div class="form-group"><label>Employment Type</label>
+            <select name="employmentType" id="editEmp">
+              <option value="inhouse">Inhouse</option>
+              <option value="contract">Contract</option>
+            </select>
+          </div>
+          <div class="form-group"></div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline" onclick="document.getElementById('editModal').style.display='none'">Cancel</button>
@@ -2307,6 +2396,8 @@ function pageUrl(array $extra = []): string {
     document.getElementById('editEnd').value   = r.endDate   || '';
     const sep = document.getElementById('editSep');
     if (sep) sep.value = r.separationType || 'voluntary';
+    const emp = document.getElementById('editEmp');
+    if (emp) emp.value = (r.employmentType === 'contract') ? 'contract' : 'inhouse';
     const loc = document.getElementById('editLocation');
     if (loc) loc.value = r.location || '';
     // Rebuild enterprise list for the chosen location, preselecting current value
