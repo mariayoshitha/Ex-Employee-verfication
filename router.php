@@ -12,7 +12,7 @@ if ($uri === false || $uri === null) {
 // Block sensitive files + direct .php/.html that .htaccess hides in production.
 $blocked = [
     '/data.json', '/audit.json', '/verify-techtiera-credentials.php', '/tt-config.json', '/tt-config.json.lock', '/.htaccess',
-    '/admin.php', '/api.php', '/router.php', '/manual.html',
+    '/admin.php', '/api.php', '/sync.php', '/sync.log', '/router.php', '/manual.html',
 ];
 foreach ($blocked as $b) {
     if (strcasecmp($uri, $b) === 0) {
@@ -30,6 +30,7 @@ if (preg_match('#^/audit-\d{4}-\d{2}\.json$#i', $uri)) {
 
 // Clean URL routes.
 if (preg_match('#^/admin/?$#', $uri))  { require __DIR__ . '/admin.php';  return true; }
+if (preg_match('#^/api/sync/?$#', $uri)) { require __DIR__ . '/sync.php';  return true; }
 if (preg_match('#^/api/?$#',   $uri))  { require __DIR__ . '/api.php';    return true; }
 if (preg_match('#^/manual/?$#',$uri))  { readfile(__DIR__ . '/manual.html'); return true; }
 

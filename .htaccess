@@ -36,8 +36,19 @@ RewriteRule ^ - [F,L]
 RewriteCond %{THE_REQUEST} \s/audit-\d{4}-\d{2}\.json[\s?] [NC]
 RewriteRule ^ - [F,L]
 
+RewriteCond %{THE_REQUEST} \s/sync\.php[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+# Defence in depth: never serve data/backup/log/import files, whatever their name
+RewriteCond %{THE_REQUEST} \s/[^\s?]*\.(json|log|lock|bak|xlsx|csv|zip|[a-z-]*bak)[\s?] [NC]
+RewriteRule ^ - [F,L]
+
+# Let PHP see the Authorization header (some cPanel/FastCGI setups strip it)
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
 # Clean URL routing
 RewriteRule ^admin/?$   admin.php   [L]
+RewriteRule ^api/sync/?$ sync.php   [L]
 RewriteRule ^api/?$     api.php     [QSA,L]
 RewriteRule ^manual/?$  manual.html [L]
 

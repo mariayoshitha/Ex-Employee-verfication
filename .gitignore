@@ -26,3 +26,6 @@ test-*.ps1
 test-*.csv
 test-*.xlsx
 test-*.php
+
+# Sync request log
+sync.log
