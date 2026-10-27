@@ -1,4 +1,5 @@
 <?php
+ini_set('display_errors', '0');
 /**
  * HRMS -> Verification Portal record sync (server-to-server, write path).
  *

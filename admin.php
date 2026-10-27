@@ -1,4 +1,5 @@
 <?php
+ini_set('display_errors', '0'); // never leak paths/stack traces to the browser
 /**
  * Employment Verification — Admin Panel
  * Multi-user, location-scoped access control.
@@ -153,6 +154,20 @@ function bootstrapConfig(): array {
 
 $_CONFIG = loadConfig();
 define('USERS',        $_CONFIG['users']);
+
+// ── Re-validate the logged-in user on EVERY request ──────────────────────────
+// Role/location/enterprise were cached at login; a user deleted or changed in
+// Settings must lose/refresh access immediately, not at session expiry.
+if (isset($_SESSION['admin_auth'])) {
+    $__u = USERS[$_SESSION['username'] ?? ''] ?? null;
+    if (!$__u) {
+        session_unset(); session_destroy();
+        header('Location: ' . ADMIN_URL); exit;
+    }
+    $_SESSION['user_role']       = $__u['role'];
+    $_SESSION['user_location']   = $__u['location']   ?? '';
+    $_SESSION['user_enterprise'] = $__u['enterprise'] ?? '';
+}
 define('LOCATIONS',    $_CONFIG['locations']);
 define('ENTERPRISES',  $_CONFIG['enterprises']);
 define('CARD_VARIANT', 'v1');
@@ -177,8 +192,14 @@ function matchEnterprise(string $raw, string $loc = ''): string {
 
 // ── Data helpers ─────────────────────────────────────────────────────────────
 function loadData(): array {
-    if (!file_exists(DATA_FILE)) return [];
-    $data = json_decode(file_get_contents(DATA_FILE), true);
+    // Shared lock: writers (admin saveData, sync.php) hold LOCK_EX while rewriting, so a read
+    // can never see a half-written/empty file and then save it back over the real data.
+    $fh = @fopen(DATA_FILE, 'rb');
+    if (!$fh) return [];
+    flock($fh, LOCK_SH);
+    $raw = stream_get_contents($fh);
+    flock($fh, LOCK_UN); fclose($fh);
+    $data = json_decode((string)$raw, true);
     return is_array($data) ? array_values($data) : [];
 }
 
@@ -273,7 +294,8 @@ function sanitizeText(string $v, int $maxLen = 200): string {
 // Validate date format YYYY-MM-DD, return '' if invalid
 function validateDate(string $d): string {
     $d = normalizeDate($d);
-    return preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : '';
+    // Must be a real calendar date (rejects 1990-13-45, 2021-02-31), not just the right shape.
+    return (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $d, $m) && checkdate((int)$m[2], (int)$m[3], (int)$m[1])) ? $d : '';
 }
 
 // Convert DD-MM-YYYY, DD/MM/YYYY, YYYY/MM/DD, or Excel date serial → YYYY-MM-DD
@@ -655,7 +677,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = trim($_POST['username'] ?? '');
             $password = $_POST['password'] ?? '';
             $user     = USERS[$username] ?? null;
-            if ($user && password_verify($password, $user['password'])) {
+            // Always run a bcrypt verify (dummy hash for unknown users) so response time doesn't reveal valid usernames.
+            $hashToCheck = $user['password'] ?? '$2y$12$8fwR0XHrOBtnqaYr3Sd2P.3FT.Zbl0r3SVblNx0zsVXVDWEPgcLQC';
+            if (password_verify($password, $hashToCheck) && $user) {
                 @file_put_contents($rlFile, json_encode(['attempts' => 0, 'lockout_until' => 0]), LOCK_EX);
                 session_regenerate_id(true);
                 $_SESSION['admin_auth']      = true;
@@ -774,10 +798,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Always merge — upsert by reference (case-insensitive)
                 $existing     = loadData();
                 $existingRefs = array_column($existing, 'reference');
-                $added = 0; $updated = 0;
+                $added = 0; $updated = 0; $skipped = 0;
                 foreach ($parsed as $new) {
                     $idx = array_search(strtolower($new['reference']), array_map('strtolower', $existingRefs));
                     if ($idx !== false) {
+                        // A location/enterprise-scoped user may only overwrite records inside their own scope.
+                        if (!$isAdminAction && (
+                              ($existing[$idx]['location'] ?? '') !== $myLocation
+                           || ($myEnt && ($existing[$idx]['enterprise'] ?? '') !== $myEnt))) {
+                            $skipped++;
+                            continue;
+                        }
                         $existing[$idx] = array_merge($existing[$idx], $new, ['id' => $existing[$idx]['id']]);
                         $updated++;
                     } else {
@@ -794,7 +825,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'upload',
                     '',
                     $isAdminAction ? 'all' : $myLocation,
-                    '+' . $added . ' upd:' . $updated
+                    '+' . $added . ' upd:' . $updated . ($skipped ? ' skipped-out-of-scope:' . $skipped : '')
                 );
                 header('Location: ' . ADMIN_URL . '?msg=uploaded'); exit;
             } else {
@@ -869,14 +900,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $entIn  = trim($_POST['enterprise'] ?? '');
             $newEnt = matchEnterprise($entIn, $newLoc);
             if (!$isAdminAction && $myEnterprise) $newEnt = $myEnterprise;
-            $record['reference']      = trim($_POST['reference']);
-            $record['legalName']      = trim($_POST['legalName']);
-            $record['role']           = trim($_POST['role'] ?? '');
+            // Same cleaning as add_record: length caps, formula-injection guard, real dates.
+            $editRefNew = sanitizeText(trim($_POST['reference'] ?? ''), 50);
+            if ($editRefNew === '') { $error = 'Employee ID is required.'; goto done; }
+            foreach ($data as $__o) {
+                if (($__o['id'] ?? '') !== $id && strcasecmp($__o['reference'] ?? '', $editRefNew) === 0) {
+                    $error = 'Employee ID "' . htmlspecialchars($editRefNew) . '" already exists on another record.'; goto done;
+                }
+            }
+            $eDob = validateDate(trim($_POST['dob'] ?? ''));
+            $eStart = validateDate(trim($_POST['startDate'] ?? ''));
+            $eEnd = validateDate(trim($_POST['endDate'] ?? ''));
+            if ($eDob === '' || $eStart === '' || $eEnd === '') { $error = 'Date of birth, start date and end date must be valid dates.'; goto done; }
+            $record['reference']      = $editRefNew;
+            $record['legalName']      = sanitizeText(trim($_POST['legalName'] ?? ''), 150);
+            $record['role']           = sanitizeText(trim($_POST['role'] ?? ''), 150);
             $record['location']       = $newLoc;
             $record['enterprise']     = sanitizeText($newEnt, 200);
-            $record['dob']            = normalizeDate(trim($_POST['dob']));
-            $record['startDate']      = normalizeDate(trim($_POST['startDate']));
-            $record['endDate']        = normalizeDate(trim($_POST['endDate']));
+            $record['dob']            = $eDob;
+            $record['startDate']      = $eStart;
+            $record['endDate']        = $eEnd;
             $record['separationType'] = $sep;
             $record['employmentType'] = $emp;
             $record['lastUpdated']    = nowStamp();
