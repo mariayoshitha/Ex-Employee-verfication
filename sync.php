@@ -135,7 +135,8 @@ if ($action === 'upsert') {
 
     $ent = null;
     foreach ((array)($cfg['enterprises'] ?? []) as $e) {
-        if (is_string($in['enterprise'] ?? null) && strcasecmp($e['name'] ?? '', trim($in['enterprise'])) === 0) { $ent = $e['name']; break; }
+        // Case-insensitive, ignoring a trailing full stop ("Pvt. Ltd" == "Pvt. Ltd.").
+        if (is_string($in['enterprise'] ?? null) && strcasecmp(rtrim($e['name'] ?? '', '. '), rtrim(trim($in['enterprise']), '. ')) === 0) { $ent = $e['name']; break; }
     }
     if ($ent === null) fail('unknown enterprise');
 
