@@ -40,11 +40,18 @@ RewriteCond %{THE_REQUEST} \s/sync\.php[\s?] [NC]
 RewriteRule ^ - [F,L]
 
 # Defence in depth: never serve data/backup/log/import files, whatever their name
-RewriteCond %{THE_REQUEST} \s/[^\s?]*\.(json|log|lock|bak|xlsx|csv|zip|[a-z-]*bak)[\s?] [NC]
+RewriteCond %{THE_REQUEST} \s/[^\s?]*\.(json|log|lock|bak|xlsx|csv|zip|ini|[a-z-]*bak)[\s?] [NC]
 RewriteRule ^ - [F,L]
 
 # Let PHP see the Authorization header (some cPanel/FastCGI setups strip it)
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+# TEMPORARY (PHP2Shell, CVE-2026-109618/109619, Oct 2026): PHP parses multipart/form-data before
+# any app code or login check, and every known exploit trigger is a multipart request. Only the admin
+# bulk-upload (CSV/XLSX) needs multipart. REMOVE this block once the host confirms PHP >= 8.5.12 / 8.4.27 /
+# 8.3.36 / 8.2.35 (or a vendor backport) so bulk upload works again.
+RewriteCond %{HTTP:Content-Type} multipart/form-data [NC]
+RewriteRule ^ - [F,L]
 
 # Clean URL routing
 RewriteRule ^admin/?$   admin.php   [L]
