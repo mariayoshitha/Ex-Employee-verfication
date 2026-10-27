@@ -175,7 +175,7 @@ foreach ($data as $i => $r) {
 $status = 200; $result = '';
 if ($action === 'delete') {
     if ($byUid !== null) { array_splice($data, $byUid, 1); $result = 'deleted'; } else { $result = 'absent'; }
-} elseif ($clash && $byUid === null) {
+} elseif ($clash) {
     flock($fh, LOCK_UN); fclose($fh);
     syncLog($ip, $action, $rec['reference'], 409);
     out(409, ['ok' => false, 'error' => 'another HRMS record already uses this reference + dob']);

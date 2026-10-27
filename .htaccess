@@ -53,6 +53,27 @@ RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 RewriteCond %{HTTP:Content-Type} multipart/form-data [NC]
 RewriteRule ^ - [F,L]
 
+# Filename-based denies. The THE_REQUEST rules above match the RAW request line, so percent-encoding
+# (/data%2ejson) slips past them; FilesMatch/Files work on the decoded path and cannot be bypassed that way.
+<FilesMatch "(?i)\.(json|log|lock|bak|xlsx|csv|zip|tmp|ini)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</FilesMatch>
+<Files "verify-techtiera-credentials.php">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</Files>
+
 # Clean URL routing
 RewriteRule ^admin/?$   admin.php   [L]
 RewriteRule ^api/sync/?$ sync.php   [L]

@@ -5,6 +5,9 @@
 
 declare(strict_types=1);
 
+// CLI only: this must never run if it is accidentally deployed to the web root.
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
+
 $src = $argv[1] ?? __DIR__ . '/TTID Exit Employee Details 2018-26(Updated-05-31-2026).xlsx';
 $out = $argv[2] ?? __DIR__ . '/TTID-Exit-cleaned-for-upload.csv';
 
